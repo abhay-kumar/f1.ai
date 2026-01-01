@@ -1,0 +1,20 @@
+# Ignore projects directory
+projects/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Ignore credentials
+creds/
+creds.*
+*.credentials
+*.secret
+
+# macOS
+.DS_Store
+
+# Environment files
+.env
+.env.*
