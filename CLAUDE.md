@@ -22,10 +22,6 @@ python3 src/fact_checker.py --project {name} --web-search --api-key YOUR_KEY
 python3 src/fact_checker.py --project {name} --validate-refs  # Check reference coverage (long-form)
 python3 src/fact_checker.py --project {name} --suggest-refs --web-search  # Get source suggestions
 
-# Check/apply phonetic pronunciation corrections
-python3 src/phonetics.py --project {name} --mode analyze
-python3 src/phonetics.py --project {name} --mode phonetic --apply
-
 # Generate voiceovers (concurrent by default)
 python3 src/audio_generator.py --project {name}
 python3 src/audio_generator.py --project {name} --sequential  # disable concurrency
@@ -77,13 +73,12 @@ python3 src/youtube_uploader_longform.py --project {name}             # Upload
 
 **Pipeline Flow:**
 ```
-script.json → fact_check → phonetics → audio/*.mp3 → footage/*.mp4 → previews/*.jpg → output/final.mp4 → YouTube
+script.json → fact_check → audio/*.mp3 → footage/*.mp4 → previews/*.jpg → output/final.mp4 → YouTube
 ```
 
 **Core Modules (`src/`):**
 - `config.py` - Centralized settings, API keys, F1 team colors, video specs (shorts + long-form)
 - `fact_checker.py` - Script validation with knowledge base, web search, and **reference validation**
-- `phonetics.py` - Pronunciation correction for F1 proper nouns (drivers, teams, circuits)
 - `audio_generator.py` - ElevenLabs TTS with caching and **concurrent processing**
 - `footage_downloader.py` - yt-dlp YouTube search/download with **concurrent downloads**
 - `preview_extractor.py` - Frame extraction with **concurrent processing**
@@ -148,17 +143,6 @@ Validates F1 script content against:
 
 ```bash
 python3 src/fact_checker.py --project {name} --strict  # Exit non-zero if unverified claims
-```
-
-### Phonetics (`phonetics.py`)
-Ensures correct pronunciation of F1 proper nouns:
-- 60+ driver pronunciations (Verstappen → "Fur-STAH-pn")
-- Team names (Ferrari → "feh-RAH-ree")
-- Circuits (Spa-Francorchamps → "SPAH fron-kor-SHOM")
-- F1 terminology (Eau Rouge → "oh ROOZH")
-
-```bash
-python3 src/phonetics.py --list  # Show all pronunciations
 ```
 
 ## script.json Format
