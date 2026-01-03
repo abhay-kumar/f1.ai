@@ -35,7 +35,8 @@ except ImportError:
 # YouTube API config
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
-    "https://www.googleapis.com/auth/youtube.force-ssl"  # Required for captions
+    "https://www.googleapis.com/auth/youtube.force-ssl",  # Required for captions
+    "https://www.googleapis.com/auth/youtube"  # Required for thumbnail upload
 ]
 CLIENT_SECRETS_FILE = f"{SHARED_DIR}/creds/youtube_client_secrets.json"
 TOKEN_FILE = f"{SHARED_DIR}/creds/youtube_token.pickle"
@@ -311,6 +312,48 @@ def upload_captions(youtube, video_id: str, caption_path: str,
         return False
 
 
+def upload_thumbnail(youtube, video_id: str, thumbnail_path: str) -> bool:
+    """Upload custom thumbnail to a YouTube video.
+
+    Supported formats: JPEG, PNG, GIF, BMP
+    Recommended size: 1280x720 (16:9 aspect ratio)
+    Max file size: 2MB
+    """
+    if not os.path.exists(thumbnail_path):
+        print(f"Thumbnail file not found: {thumbnail_path}")
+        return False
+
+    # Determine MIME type from extension
+    ext = os.path.splitext(thumbnail_path)[1].lower()
+    mime_types = {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.bmp': 'image/bmp'
+    }
+    mime_type = mime_types.get(ext, 'image/jpeg')
+
+    try:
+        media = MediaFileUpload(
+            thumbnail_path,
+            mimetype=mime_type,
+            resumable=True
+        )
+
+        request = youtube.thumbnails().set(
+            videoId=video_id,
+            media_body=media
+        )
+
+        response = request.execute()
+        return response is not None
+
+    except Exception as e:
+        print(f"Thumbnail upload failed: {e}")
+        return False
+
+
 def upload_video(youtube, video_path: str, metadata: Dict,
                  privacy: str = "private") -> Optional[Dict]:
     """Upload video to YouTube"""
@@ -376,6 +419,14 @@ def main():
     script_path = f"{project_dir}/script.json"
     captions_path = f"{project_dir}/output/captions.srt"
 
+    # Check for thumbnail (supports multiple formats)
+    thumbnail_path = None
+    for ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp']:
+        candidate = f"{project_dir}/output/thumbnail{ext}"
+        if os.path.exists(candidate):
+            thumbnail_path = candidate
+            break
+
     # Validate files exist
     if not os.path.exists(video_path):
         print(f"Error: Video not found at {video_path}")
@@ -387,6 +438,7 @@ def main():
         sys.exit(1)
 
     has_captions = os.path.exists(captions_path)
+    has_thumbnail = thumbnail_path is not None
 
     # Load script and generate metadata
     with open(script_path) as f:
@@ -424,6 +476,7 @@ def main():
     print(f"   {', '.join(metadata['tags'][:15])}...")
     print(f"\n📚 REFERENCES: {ref_count} sources cited")
     print(f"📝 CAPTIONS: {'Yes - ' + captions_path if has_captions else 'No captions file found'}")
+    print(f"🖼️  THUMBNAIL: {'Yes - ' + thumbnail_path if has_thumbnail else 'No thumbnail found (place thumbnail.jpg/png in output/)'}")
     print(f"\n🔒 PRIVACY: {args.privacy}")
     print(f"📁 VIDEO: {video_path}")
     print(f"📦 SIZE: {file_size:.1f}MB")
@@ -465,6 +518,16 @@ def main():
             else:
                 print("⚠️  Caption upload failed (video is still uploaded)")
 
+        # Upload thumbnail if available
+        thumbnail_uploaded = False
+        if has_thumbnail:
+            print(f"\n🖼️  Uploading thumbnail...")
+            thumbnail_uploaded = upload_thumbnail(youtube, video_id, thumbnail_path)
+            if thumbnail_uploaded:
+                print("✅ Thumbnail uploaded successfully")
+            else:
+                print("⚠️  Thumbnail upload failed (video is still uploaded)")
+
         print(f"{'=' * 70}")
 
         # Save upload info
@@ -476,6 +539,7 @@ def main():
             "format": "longform",
             "references_count": ref_count,
             "captions_uploaded": captions_uploaded,
+            "thumbnail_uploaded": thumbnail_uploaded,
         }
 
         with open(f"{project_dir}/upload_info.json", "w") as f:
