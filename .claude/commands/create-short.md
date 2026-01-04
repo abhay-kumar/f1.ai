@@ -40,24 +40,31 @@ f1.ai/
    - `footage_query`: YouTube search query for relevant footage
    - `footage_start`: Timestamp in source video (verify with previews!)
 
-4. **Download Footage**: Use yt-dlp to find and download clips
-5. **Extract Previews**: Generate thumbnail frames to verify content matches
-6. **Verify Footage**: CRITICAL - Check preview images to ensure:
+4. **REVIEW CHECKPOINT**: Present the script to the user for review before proceeding:
+   - Display the complete script with all segments
+   - Show title, segment texts, and footage queries
+   - **STOP and wait for user approval** before continuing
+   - User may request changes to the script before proceeding
+   - Only continue to step 5 after explicit user approval
+
+5. **Download Footage**: Use yt-dlp to find and download clips
+6. **Extract Previews**: Generate thumbnail frames to verify content matches
+7. **Verify Footage**: CRITICAL - Check preview images to ensure:
    - Footage matches the narrative (not wrong era/drivers)
    - Timestamp shows the actual moment needed
    - Update `footage_start` based on visual verification
 
-7. **Generate Audio**: Use ElevenLabs API (caches to avoid re-generation)
-8. **Assemble Video**: Run video assembler with:
+8. **Generate Audio**: Use ElevenLabs API (caches to avoid re-generation)
+9. **Assemble Video**: Run video assembler with:
    - Consistent 30fps (avoids timestamp issues)
    - Blur-pad effect (no cropping)
    - Background music mixed at 15%
    - GPU encoding (VideoToolbox)
 
-9. **Verify Final Output**: Check that:
-   - Video and audio durations match
-   - Video plays correctly throughout
-   - Content syncs with narration
+10. **Verify Final Output**: Check that:
+    - Video and audio durations match
+    - Video plays correctly throughout
+    - Content syncs with narration
 
 ### Critical Lessons Learned
 

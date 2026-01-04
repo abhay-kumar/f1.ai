@@ -6,6 +6,8 @@ Includes all fixes for common issues:
 - Split filter for blur-pad effect
 - Re-encode during concat to normalize timestamps
 - Background music mixing
+- Concurrent segment processing for faster assembly
+- GPU acceleration support (VideoToolbox on macOS, NVENC on Linux/Windows)
 """
 import os
 import sys
@@ -13,6 +15,10 @@ import json
 import argparse
 import subprocess
 import urllib.request
+import platform
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from typing import Tuple, Optional
+import multiprocessing
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import (
@@ -20,6 +26,56 @@ from src.config import (
     OUTPUT_WIDTH, OUTPUT_HEIGHT, BACKGROUND_MUSIC, MUSIC_VOLUME,
     F1_TEAM_COLORS, F1_DEFAULT_COLOR
 )
+
+# Concurrency settings
+MAX_CONCURRENT_SEGMENTS = min(4, multiprocessing.cpu_count())
+
+
+def get_gpu_encoder() -> Tuple[str, list]:
+    """
+    Detect available GPU encoder and return encoder name with extra flags.
+
+    Returns:
+        Tuple of (encoder_name, extra_flags_list)
+
+    Supported encoders (in priority order):
+    - macOS: h264_videotoolbox (Metal acceleration)
+    - Linux/Windows with NVIDIA: h264_nvenc (CUDA acceleration)
+    - Fallback: libx264 (CPU)
+    """
+    system = platform.system()
+
+    if system == "Darwin":
+        # macOS: VideoToolbox with Metal acceleration
+        # Test if videotoolbox is available
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-encoders"],
+            capture_output=True, text=True
+        )
+        if "h264_videotoolbox" in result.stdout:
+            return "h264_videotoolbox", ["-allow_sw", "1"]
+
+    elif system in ("Linux", "Windows"):
+        # Check for NVIDIA NVENC
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-encoders"],
+            capture_output=True, text=True
+        )
+        if "h264_nvenc" in result.stdout:
+            # NVENC with quality tuning
+            return "h264_nvenc", [
+                "-preset", "p4",  # Balance speed/quality
+                "-tune", "hq",
+                "-rc", "vbr",
+                "-cq", "23"
+            ]
+
+    # Fallback to CPU encoding
+    return "libx264", ["-preset", "medium", "-crf", "23"]
+
+
+# Detect encoder at module load
+GPU_ENCODER, GPU_ENCODER_FLAGS = get_gpu_encoder()
 
 def get_duration(file_path):
     cmd = ["ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", file_path]
@@ -90,7 +146,8 @@ def get_team_color(text):
 
     return F1_DEFAULT_COLOR
 
-def create_segment_video(segment_idx, segment, audio_path, footage_dir, output_path):
+def create_segment_video(segment_idx, segment, audio_path, footage_dir, output_path,
+                         encoder=None, encoder_flags=None):
     """Create video segment with blur-pad effect and text captions"""
     footage_file = f"{footage_dir}/{segment['footage']}"
     if not os.path.exists(footage_file):
@@ -158,6 +215,10 @@ def create_segment_video(segment_idx, segment, audio_path, footage_dir, output_p
         f"[bg][fg]overlay=(W-w)/2:(H-h)/2,{text_filter}[out]"
     )
 
+    # Use provided encoder or fall back to detected GPU encoder
+    video_encoder = encoder or GPU_ENCODER
+    extra_flags = encoder_flags if encoder_flags is not None else GPU_ENCODER_FLAGS
+
     cmd = [
         "ffmpeg", "-y",
         "-i", footage_file,
@@ -165,7 +226,8 @@ def create_segment_video(segment_idx, segment, audio_path, footage_dir, output_p
         "-filter_complex", filter_complex,
         "-map", "[out]",
         "-map", "1:a",
-        "-c:v", "h264_videotoolbox",
+        "-c:v", video_encoder,
+        *extra_flags,
         "-b:v", VIDEO_BITRATE,
         "-r", str(FRAME_RATE),  # CRITICAL: Consistent framerate
         "-c:a", "aac", "-b:a", AUDIO_BITRATE,
@@ -178,6 +240,21 @@ def create_segment_video(segment_idx, segment, audio_path, footage_dir, output_p
     if not os.path.exists(output_path):
         return False, result.stderr[-200:] if result.stderr else "Unknown error"
     return True, None
+
+
+def process_segment_video(args: Tuple) -> Tuple[int, bool, float, Optional[str]]:
+    """Process a single segment video (for concurrent execution)"""
+    idx, segment, audio_path, footage_dir, output_path, encoder, encoder_flags = args
+
+    success, error = create_segment_video(
+        idx, segment, audio_path, footage_dir, output_path,
+        encoder=encoder, encoder_flags=encoder_flags
+    )
+
+    if success:
+        duration = get_duration(output_path)
+        return idx, True, duration, None
+    return idx, False, 0, error
 
 def add_background_music(video_path, output_path):
     """Mix background music under video audio"""
@@ -234,6 +311,11 @@ def main():
     parser = argparse.ArgumentParser(description='Assemble final video')
     parser.add_argument('--project', required=True, help='Project name')
     parser.add_argument('--no-music', action='store_true', help='Skip background music')
+    parser.add_argument('--sequential', action='store_true', help='Disable concurrent processing')
+    parser.add_argument('--workers', type=int, default=MAX_CONCURRENT_SEGMENTS,
+                        help=f'Max concurrent workers (default: {MAX_CONCURRENT_SEGMENTS})')
+    parser.add_argument('--encoder', choices=['auto', 'videotoolbox', 'nvenc', 'cpu'],
+                        default='auto', help='Video encoder (default: auto-detect)')
     args = parser.parse_args()
 
     project_dir = get_project_dir(args.project)
@@ -250,9 +332,21 @@ def main():
         print(f"Error: Script not found at {script_file}")
         sys.exit(1)
 
+    # Determine encoder
+    if args.encoder == 'auto':
+        encoder, encoder_flags = GPU_ENCODER, GPU_ENCODER_FLAGS
+    elif args.encoder == 'videotoolbox':
+        encoder, encoder_flags = "h264_videotoolbox", ["-allow_sw", "1"]
+    elif args.encoder == 'nvenc':
+        encoder, encoder_flags = "h264_nvenc", ["-preset", "p4", "-tune", "hq", "-rc", "vbr", "-cq", "23"]
+    else:  # cpu
+        encoder, encoder_flags = "libx264", ["-preset", "medium", "-crf", "23"]
+
     print("=" * 60)
     print(f"Video Assembler - Project: {args.project}")
     print(f"Settings: {FRAME_RATE}fps, {OUTPUT_WIDTH}x{OUTPUT_HEIGHT}")
+    print(f"Encoder: {encoder} (GPU: {encoder != 'libx264'})")
+    print(f"Concurrency: {'Sequential' if args.sequential else f'{args.workers} workers'}")
     print("=" * 60)
 
     with open(script_file) as f:
@@ -276,20 +370,51 @@ def main():
     # Create segments
     print(f"\nCreating {len(segments)} segments...\n")
     segment_videos = []
+    results = {}
 
-    for i, segment in enumerate(segments):
-        audio_path = f"{audio_dir}/segment_{i:02d}.mp3"
-        video_path = f"{temp_dir}/segment_{i:02d}.mp4"
+    # Prepare tasks
+    tasks = [
+        (i, segment, f"{audio_dir}/segment_{i:02d}.mp3", footage_dir,
+         f"{temp_dir}/segment_{i:02d}.mp4", encoder, encoder_flags)
+        for i, segment in enumerate(segments)
+    ]
 
-        print(f"[{i+1}/{len(segments)}] {segment['context']}...", end=" ", flush=True)
+    if args.sequential:
+        # Sequential processing
+        for task in tasks:
+            idx = task[0]
+            segment = segments[idx]
+            print(f"[{idx+1}/{len(segments)}] {segment['context']}...", end=" ", flush=True)
 
-        success, error = create_segment_video(i, segment, audio_path, footage_dir, video_path)
-        if success:
-            segment_videos.append(video_path)
-            duration = get_duration(video_path)
-            print(f"Done ({duration:.1f}s)")
-        else:
-            print(f"Failed: {error}")
+            idx, success, duration, error = process_segment_video(task)
+            if success:
+                segment_videos.append(f"{temp_dir}/segment_{idx:02d}.mp4")
+                print(f"Done ({duration:.1f}s)")
+            else:
+                print(f"Failed: {error}")
+            results[idx] = (success, duration)
+    else:
+        # Concurrent processing using ProcessPoolExecutor
+        # Note: Using processes instead of threads for CPU-bound FFmpeg work
+        print(f"Processing {len(tasks)} segments concurrently...\n")
+
+        with ProcessPoolExecutor(max_workers=args.workers) as executor:
+            future_to_idx = {executor.submit(process_segment_video, task): task[0] for task in tasks}
+
+            for future in as_completed(future_to_idx):
+                idx, success, duration, error = future.result()
+                segment = segments[idx]
+
+                if success:
+                    segment_videos.append(f"{temp_dir}/segment_{idx:02d}.mp4")
+                    print(f"[{idx+1}/{len(segments)}] Done: {segment['context']} ({duration:.1f}s)")
+                else:
+                    print(f"[{idx+1}/{len(segments)}] Failed: {segment['context']} - {error}")
+
+                results[idx] = (success, duration)
+
+        # Sort segment videos by index to maintain order
+        segment_videos.sort(key=lambda x: int(x.split('_')[-1].replace('.mp4', '')))
 
     if not segment_videos:
         print("\nNo segments created!")
