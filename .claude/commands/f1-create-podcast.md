@@ -1,6 +1,6 @@
 # Create F1 Podcast
 
-Create an F1 Burnouts podcast episode with the host discussing the provided topics directly with the audience.
+Create an F1 Burnouts podcast episode with the host discussing the provided topics directly with the audience. The content must be **engaging, funny, intriguing, and sometimes sarcastic** - leveraging Gemini TTS with SSML for expressive, professional podcast delivery.
 
 ## Parameters
 
@@ -20,6 +20,12 @@ The podcast features a single passionate host speaking directly to the audience:
   - Cares deeply about climate change initiatives in F1
   - Strong advocate for women in F1
   - Wishes well for underperforming teams and departing drivers/teams
+- **Personality Traits**:
+  - Witty and quick with comebacks
+  - Self-aware about their own biases (and jokes about it)
+  - Finds humor in F1's absurdities and drama
+  - Can be delightfully sarcastic when the situation calls for it
+  - Genuinely cares about the sport and its future
 - **Tone**: 
   - Immersive storytelling with intrigue
   - Humor and sarcasm woven throughout
@@ -28,23 +34,49 @@ The podcast features a single passionate host speaking directly to the audience:
   - Family-friendly (no swearing) - engages kids and adults alike
 - **Speaking Style**: Conversational, as if talking directly to a friend about F1
 
-## TTS Engine: Google Gemini 2.5
+## TTS Engine: Google Gemini 2.5 with SSML
 
-This podcast uses **Google Gemini 2.5 TTS** with **SSML enhancement** for immersive, expressive audio:
+This podcast uses **Google Gemini 2.5 TTS** with **comprehensive SSML enhancement** for immersive, expressive audio.
 
 ### Why Gemini TTS?
 - **Free tier available** (gemini-2.5-flash-preview-tts)
-- **Emotion markers** directly in text: `[excited]`, `[empathetic]`, `[speaking slowly]`
-- **SSML support** for pauses, emphasis, and prosody control
+- **Emotion markers** directly in text: `[excited]`, `[sarcastic]`, `[whispering]`
+- **Full SSML support** for pauses, emphasis, and prosody control
 - **Natural speech** with context-aware pacing
+- **Hybrid control**: Mix [markers] and SSML tags for maximum expressiveness
 
-### SSML Features (Auto-Applied)
-The `ssml_generator.py` module automatically enhances scripts with:
-- **Strategic pauses** after key phrases and questions
-- **Emphasis** on important words (incredible, billion, first, etc.)
-- **Emotion markers** based on segment emotion field
-- **Natural breathing points** for long sentences
-- **Punctuation enhancement** for expressive delivery
+### SSML Features (Auto-Applied by ssml_generator.py)
+
+The script is automatically enhanced with professional podcast SSML:
+
+#### 1. Strategic Pauses (`<break>`)
+- **After greetings**: Let the energy land (0.9s after "Welcome back!")
+- **Before reveals**: Build anticipation (0.6s before "But here's the thing...")
+- **Comedic timing**: Perfect pause after setup, before punchline
+- **Rhetorical questions**: Let them sink in (0.7s after "?")
+- **Transitions**: Smooth segment changes (0.4-0.5s)
+
+#### 2. Word Emphasis (`<emphasis>`)
+- **Strong**: "incredible", "billion", "never", "championship"
+- **Moderate**: "actually", "crucial", "amazing", "exactly"
+- **Reduced**: Intimate phrases like "just between us"
+
+#### 3. Number Processing (`<say-as>`)
+- Years: "2024" reads as "twenty twenty-four"
+- Large numbers: "1,000,000" reads naturally
+- Percentages: "50%" reads as "fifty percent"
+- Lap times: "1:23.456" reads properly
+
+#### 4. Emotion Markers (Gemini-specific)
+```
+[excited]      - High energy, celebrations
+[sarcastic]    - Dry humor, ironic observations
+[empathetic]   - Heartfelt moments, tributes
+[speaking slowly] - Dramatic emphasis
+[whispering]   - Intimate asides
+[laughing]     - Genuine humor moments
+[sighing]      - Exasperation, reflection
+```
 
 ### Available Voices
 - **Charon** (default) - Informative, authoritative (ideal for podcasts)
@@ -56,14 +88,15 @@ The `ssml_generator.py` module automatically enhances scripts with:
 
 ## Instructions
 
-You are creating a ~20 minute podcast episode where the host speaks directly to the audience about F1 topics.
+You are creating a ~20 minute podcast episode where the host speaks directly to the audience about F1 topics. **The content must be engaging, funny, intriguing, and sometimes sarcastic.**
 
 ### Project Structure
 ```
 projects/{project-name}/
-├── script.json         # Podcast script with monologue segments
-├── audio/              # Generated voiceovers per segment
-└── output/             # Final podcast audio (final.mp3)
+├── script.json         # Podcast script with segments
+└── output/
+    ├── cover_art.jpg   # Podcast cover art (1400x1400)
+    └── final.mp3       # Final podcast with intro/outro music
 ```
 
 ### Workflow
@@ -87,7 +120,7 @@ projects/{project-name}/
      "segments": [
        {
          "id": 1,
-         "text": "Welcome to F1 Burnouts! I'm your host, and today we're diving into...",
+         "text": "Welcome back to F1 Burnouts! I'm your host, and today we're diving into...",
          "context": "Intro",
          "emotion": "energetic"
        },
@@ -101,62 +134,99 @@ projects/{project-name}/
    }
    ```
 
-4. **Script Guidelines**:
-   - **Direct address**: Speak TO the audience, not at them ("you", "let me tell you", "think about this")
-   - **Storytelling**: Build narratives with tension, reveals, and payoffs
-   - **Emotional range**: Shift between excitement, contemplation, humor, sincerity
-   - **Engineering depth**: Explain technical concepts accessibly but accurately
-   - **Historical context**: Connect current events to F1 history
-   - **Balanced criticism**: Praise AND critique where deserved (including McLaren)
-   - **McLaren moments**: Occasional proud McLaren references, but never at expense of objectivity
-   - **Sarcasm with heart**: Playful jabs that never feel mean-spirited
-   - **Family-friendly**: No profanity - clever wordplay instead
-   - **Target duration**: ~20 minutes (approximately 3000-3500 words total)
-   - **Structure**: Hook → Intro → Deep dives → Reflections → Sign-off
+4. **Script Guidelines - MAKING IT ENGAGING**:
 
-5. **Gemini TTS Script Optimization** (IMPORTANT):
+   **STORYTELLING & INTRIGUE**:
+   - Hook the audience in the first 10 seconds with something surprising or provocative
+   - Build narratives with tension, reveals, and payoffs
+   - Use cliffhangers within segments ("But wait... it gets better")
+   - Drop hints about what's coming ("You're not going to believe what happened next")
+   - Create mystery: "There's one detail that everyone seems to be missing..."
+
+   **HUMOR & SARCASM**:
+   - F1 is inherently dramatic - lean into the absurdity
+   - Sarcasm works best when it's self-aware and affectionate
+   - Mock predictable outcomes: "In news that shocked absolutely no one..."
+   - Playful jabs at team tendencies: "Ferrari doing Ferrari things"
+   - Self-deprecating humor about your own McLaren bias
+   - Timing is everything - set up, pause, deliver
    
-   Unlike ElevenLabs, Gemini TTS **supports** emotion markers and SSML tags. Use them strategically:
+   **EMOTION & VARIATION**:
+   - Alternate between energy levels - don't be one-note
+   - Go from excited to contemplative to sarcastic to heartfelt
+   - Use silence (pauses) as a tool - let big moments breathe
+   - Show genuine passion for the sport, not manufactured enthusiasm
+   - Be vulnerable when appropriate - share real reactions
+
+   **DIRECT AUDIENCE ENGAGEMENT**:
+   - Speak TO the audience, not at them ("you", "let me tell you", "think about this")
+   - Pose rhetorical questions and pause
+   - Anticipate and address counter-arguments
+   - Create inside jokes that return throughout the episode
+   - Make the listener feel like they're in on something
+
+   **CONTENT DEPTH**:
+   - Engineering depth: Explain technical concepts accessibly but accurately
+   - Historical context: Connect current events to F1 history
+   - Balanced criticism: Praise AND critique where deserved (including McLaren)
+   - Hot takes: Don't be afraid to have strong opinions (but defend them)
    
-   **Emotion markers in text** (Gemini reads these as instructions, not words):
-   - `[excited]` - For high-energy moments
-   - `[empathetic]` - For heartfelt content
-   - `[speaking slowly]` - For emphasis or dramatic effect
-   - `[whispering]` - For intimate asides
-   - `[laughing]` - For genuine humor moments
-   - `[sighing]` - For exasperation or reflection
-   
-   **When to use emotion markers**:
+   **STRUCTURE**:
+   - **Target duration**: ~20 minutes (approximately 3000-3500 words total)
+   - **Flow**: Hook -> Intro -> Deep dives -> Hot takes -> Heartfelt moment -> Sign-off
+   - Vary segment lengths - not everything needs equal time
+   - End strong - the last impression matters
+
+5. **Writing for Gemini TTS with SSML**:
+
+   The `ssml_generator.py` will automatically enhance your script, but write with these features in mind:
+
+   **PUNCTUATION FOR PACING**:
+   ```
+   Ellipses (...) = trailing off, building suspense
+   Em-dashes (—) = interruptions, asides, dramatic interjections  
+   Exclamation marks = energy (use sparingly!)
+   Question marks = pause for thought
+   ```
+
+   **EMOTION MARKERS IN TEXT** (Gemini reads these as instructions):
+   ```
+   "[excited] And this is where it gets absolutely wild!"
+   "[speaking slowly] Think about that for a moment."
+   "[sarcastic] Oh, what a surprise, another Ferrari strategy error."
+   "[whispering] Now, here's something most people don't know..."
+   "[laughing] I mean, you can't make this stuff up!"
+   ```
+
+   **WHEN TO USE INLINE MARKERS**:
    - At the START of emotionally distinct passages
+   - For dramatic delivery shifts mid-segment
    - Sparingly - one per paragraph maximum
-   - For dramatic effect, not every sentence
-   
-   **Example with markers**:
-   ```
-   "[excited] And here's where it gets absolutely wild!"
-   "[speaking slowly] Think about that for a moment... a billion cars."
-   "[laughing] Oh, that's so typically Ferrari, isn't it?"
-   ```
-   
-   **Punctuation for natural pacing**:
-   - Ellipses (...) for trailing off or building suspense
-   - Dashes (—) for interruptions or asides
-   - Exclamation marks for emphasis (use sparingly)
-   - Question marks with pauses for rhetorical effect
-   
-   **The SSML generator will automatically add**:
-   - Pauses after questions
-   - Emphasis on key words
-   - Breath marks for long sentences
-   - Micro-pauses at natural break points
+   - For comedic effect (sarcasm, mock surprise)
+
+   **PHRASES THAT TRIGGER AUTO-PAUSES**:
+   - "Welcome back to..." (0.9s pause after)
+   - "But here's the thing..." (0.6s pause before)
+   - "And in news that shocked no one..." (0.7s pause after)
+   - Questions ending in "?" (0.7s pause after)
+   - "Now," at start of sentence (0.5s pause before)
+
+   **WORDS THAT GET AUTO-EMPHASIZED**:
+   - Strong: incredible, billion, never, first, championship, zero
+   - Moderate: actually, crucial, exactly, really
 
 6. **Emotional Markers** (segment metadata for SSML enhancement):
-   - `emotion: "energetic"` - Exciting moments, celebrations → `[excited]` marker
-   - `emotion: "contemplative"` - Thoughtful analysis → `[speaking slowly]` marker
-   - `emotion: "humorous"` - Sarcastic takes → `[playful]` marker
-   - `emotion: "heartfelt"` - Tributes, farewells → `[empathetic]` marker
-   - `emotion: "serious"` - Critical analysis → `[serious]` marker
-   - `emotion: "passionate"` - Advocacy, engineering appreciation → `[passionate]` marker
+   
+   | Emotion | Use For | Gemini Marker | Prosody |
+   |---------|---------|---------------|---------|
+   | `energetic` | Exciting moments, celebrations | `[excited]` | Fast, high pitch |
+   | `intrigued` | Mysteries, revelations, setups | `[intrigued]` | Slower, curious |
+   | `contemplative` | Thoughtful analysis, reflection | `[speaking slowly]` | Slow, lower pitch |
+   | `humorous` | Jokes, light moments | `[playful]` | Normal, slight lift |
+   | `sarcastic` | Dry humor, ironic observations | `[sarcastic]` | Slower, deadpan |
+   | `heartfelt` | Tributes, emotional moments | `[empathetic]` | Slow, soft |
+   | `serious` | Critical analysis, concerns | `[serious]` | Slow, lower pitch |
+   | `passionate` | Advocacy, engineering appreciation | `[passionate]` | Fast, high energy |
 
 7. **CHECKPOINT - Script Review**:
    - Present the complete script to the user
@@ -165,18 +235,31 @@ projects/{project-name}/
    - **STOP and wait for user approval**
    - Make any requested changes before proceeding
 
-8. **Generate Audio** (using Gemini TTS):
+8. **Generate Audio & Add Music**:
    ```bash
-   # Default: Flash model (free), with SSML enhancement
+   # Step 1: Generate complete podcast (single TTS request for consistent voice)
    python3 src/gemini_podcast_audio_generator.py --project {name}
    
-   # Options:
-   # --model pro      # Use Pro model (paid, highest quality)
-   # --model flash    # Use Flash model (free, default)
-   # --voice Kore     # Change voice (default: Charon)
-   # --no-ssml        # Disable SSML enhancement
-   # --sequential     # Process segments one at a time
+   # Step 2: Add intro/outro music (overwrites final.mp3 with music version)
+   python3 src/podcast_music_mixer.py --project {name} \
+     --music shared/music/podcast_default.mp3 \
+     --documentary \
+     --output projects/{name}/output/final.mp3
    ```
+   
+   **Why Single Request?**
+   The audio generator sends the ENTIRE script in ONE TTS request with a voice profile.
+   This ensures consistent voice characteristics throughout - no more "different people talking".
+   
+   **Audio Generator Options:**
+   - `--model pro` - Use Pro model (paid, highest quality)
+   - `--voice Kore` - Change voice (default: Charon)
+   - `--preview` - Preview transcript and voice profile
+   - `--legacy` - Use old segment-by-segment mode (not recommended)
+   
+   **Music Mixer Options:**
+   - `--documentary` - Clean intro/outro only (recommended)
+   - `--dry-run` - Preview music placement
 
 9. **Verify Output**:
    - Check total duration matches expectations
@@ -185,77 +268,129 @@ projects/{project-name}/
 
 ### Voice & Style Patterns
 
-**Engaging the audience**:
-- "Now, here's where it gets interesting..."
-- "Stay with me on this one..."
-- "I know what you're thinking, but hear me out..."
-- "Let's break this down together..."
-- "You're going to love this..."
-
-**McLaren pride (balanced)**:
-- "Look, I'm a McLaren fan, you all know that, but even I have to admit..."
-- "As much as it pains my papaya-loving heart..."
-- "Now, this is where my McLaren bias might show, but objectively speaking..."
-
-**Engineering appreciation**:
-- "The engineering behind this is absolutely brilliant..."
-- "This is where the physics gets beautiful..."
-- "The regulations say X, but the clever interpretation is..."
-
-**Sarcasm and humor**:
-- "Oh, what a surprise, another penalty that totally makes sense..."
-- "Because obviously, that's exactly what everyone predicted..." 
-- "And in news that shocked absolutely no one..."
-
-**Heartfelt moments**:
-- "This is what F1 is really about..."
-- "You have to respect the journey..."
-- "Regardless of the team, that's a human being who gave everything..."
-
-**Critical but fair**:
-- "I love this team, but let's be honest here..."
-- "Credit where it's due, but also..."
-- "This isn't criticism for its own sake - this matters because..."
-
-**Climate and inclusion advocacy**:
-- "F1 has a responsibility here, and here's what they're doing..."
-- "The women making waves in this sport deserve recognition..."
-- "Sustainability isn't just a buzzword - let me explain why this matters..."
-
-**Wishing well**:
-- "To the teams struggling right now - keep pushing, the sport needs you..."
-- "As they exit the sport, let's remember what they contributed..."
-- "Every team has a story, and theirs matters..."
-
-### Example Segment Flow (with Gemini emotion markers)
-
+**ENGAGEMENT HOOKS**:
 ```
-[emotion: energetic]
-"[excited] Welcome back to F1 Burnouts! I'm your host, and oh boy, do we have a lot to unpack today..."
+"Now, here's where it gets interesting..."
+"Stay with me on this one..."
+"I know what you're thinking, but hear me out..."
+"Let's break this down together..."
+"You're going to love this..."
+"Okay, buckle up for this one..."
+"I need to tell you something that's been bothering me..."
+```
 
-[emotion: intrigued]
-"Now, here's where it gets fascinating. You see, the regulations specifically state... but what Red Bull figured out was..."
+**BUILDING INTRIGUE**:
+```
+"There's something nobody's talking about..."
+"And here's the detail everyone missed..."
+"But wait... it gets even better."
+"Now, what they don't tell you is..."
+"The real story? Nobody wants to admit this..."
+```
 
-[emotion: humorous]
-"[laughing] And in news that surprised absolutely everyone - and by everyone, I mean no one - we saw another strategic masterclass from Ferrari."
+**SARCASM & HUMOR**:
+```
+"[sarcastic] Oh, what a surprise, another penalty that totally makes sense..."
+"And in news that shocked absolutely no one..."
+"Because obviously, that's exactly what everyone predicted..."
+"[laughing] I mean, you can't make this stuff up!"
+"Ferrari being Ferrari, as they say..."
+"In other breaking news, water is wet..."
+"Ah yes, the classic 'we need to talk about strategy' post-race radio..."
+```
 
-[emotion: heartfelt]
-"[empathetic] But jokes aside, watching that driver cross the line for the last time... there's something about this sport that just grabs you, you know?"
+**MCLAREN REFERENCES (balanced)**:
+```
+"Look, I'm a McLaren fan, you all know that, but even I have to admit..."
+"As much as it pains my papaya-loving heart..."
+"Now, this is where my McLaren bias might show, but objectively speaking..."
+"[sighing] Being a McLaren fan builds character, I'll tell you that..."
+```
 
-[emotion: passionate]
-"And this is why F1's sustainability initiatives matter. It's not just about racing - it's about proving that performance and environmental responsibility can coexist."
+**ENGINEERING APPRECIATION**:
+```
+"The engineering behind this is absolutely brilliant..."
+"This is where the physics gets beautiful..."
+"The regulations say X, but the clever interpretation is..."
+"Now, from an engineering perspective, this is actually genius..."
+```
 
-[emotion: energetic]
+**HEARTFELT MOMENTS**:
+```
+"[empathetic] This is what F1 is really about..."
+"You have to respect the journey..."
+"Regardless of the team, that's a human being who gave everything..."
+"[speaking slowly] Take a moment to appreciate what we just witnessed..."
+```
+
+**CRITICAL BUT FAIR**:
+```
+"I love this team, but let's be honest here..."
+"Credit where it's due, but also..."
+"This isn't criticism for its own sake - this matters because..."
+"I hate to say it, but someone needs to..."
+```
+
+**SIGN-OFFS**:
+```
 "[excited] That's all for today's episode of F1 Burnouts. Until next time, keep the rubber on the track!"
+"Thanks for listening - now go argue with someone about this on the internet. That's what F1 fans do."
+"If you enjoyed this, share it with a friend who needs more F1 drama in their life."
+```
+
+### Example Segment with Full SSML Enhancement
+
+**Script text** (what you write):
+```
+"Welcome back to F1 Burnouts! Today we're diving into something absolutely wild. [sarcastic] And in news that shocked absolutely no one... Ferrari has once again found a creative way to throw away a race win. Now, here's the thing — and I say this as someone who genuinely respects the Scuderia — their strategy team seems to be operating on a different timeline than the rest of us. But wait... it gets better. Let me tell you what happened next."
+```
+
+**After SSML processing** (what Gemini TTS receives):
+```
+[excited] Welcome back to F1 Burnouts! <break time='0.9s'/> Today we're diving into something <emphasis level="strong">absolutely</emphasis> wild. [sarcastic] And in news that <emphasis level="strong">shocked</emphasis> <emphasis level="strong">absolutely</emphasis> <emphasis level="strong">no one</emphasis>... <break time='0.7s'/> Ferrari has once again found a creative way to throw away a race win. <break time='0.5s'/> Now, <break time='0.5s'/> here's the thing <break time='0.25s'/> and I say this as someone who <emphasis level="moderate">genuinely</emphasis> respects the Scuderia <break time='0.25s'/> their strategy team seems to be operating on a different timeline than the rest of us. <emphasis level="moderate">But</emphasis> wait... <break time='0.5s'/> it gets better. Let me tell <emphasis level="moderate">you</emphasis> what happened next.
 ```
 
 ### Output
 
-Final audio: `projects/{name}/output/final.mp3`
-- Format: MP3, high quality (256kbps)
-- Sample rate: 24kHz
+**Final Podcast**: `projects/{name}/output/final.mp3`
+- Format: MP3, 256kbps
+- Sample rate: 44.1kHz
+- Intro and outro music included
+- Loudness normalized to -16 LUFS
 - Duration: ~20 minutes
-- Channels: Mono (Gemini TTS output)
+
+## Background Music Integration
+
+Clean intro/outro music approach - voice content remains completely clean.
+
+### How It Works
+
+| Section | Timing | Description |
+|---------|--------|-------------|
+| **Intro** | 00:00 - 00:12 | Music at 80%, fades out as voice starts |
+| **Content** | 00:12 - end-10s | Pure voice, NO music |
+| **Outro** | last 10s - end | Music fades in, swells after voice ends |
+
+### Podcast Music Track
+
+Default track in `shared/music/podcast_default.mp3` (energetic rock, ~2.5 min)
+
+**Credit**: Track by [Alex-Productions](https://soundcloud.com/alexproductionsmusic) - No Copyright Music
+
+### Music Mixing Command
+
+```bash
+# Add intro/outro music (outputs to final.mp3)
+python3 src/podcast_music_mixer.py --project {name} \
+  --music shared/music/podcast_default.mp3 \
+  --documentary \
+  --output projects/{name}/output/final.mp3
+
+# Preview without processing
+python3 src/podcast_music_mixer.py --project {name} \
+  --music shared/music/podcast_default.mp3 \
+  --documentary --dry-run
+```
 
 ### API Key Setup
 
@@ -267,6 +402,18 @@ Get your free Google AI API key:
 ### After Creation
 
 Suggest potential next steps:
-- Upload to podcast platform
-- Create video version with waveform visualization
+- Upload to podcast platform (RSS.com, Spotify, Apple Podcasts)
 - Generate transcript for show notes
+
+### Quality Checklist
+
+Before generating audio, verify the script has:
+- [ ] A hook in the first 10 seconds
+- [ ] At least 3 different emotion types used
+- [ ] Sarcasm/humor woven throughout (not just in one section)
+- [ ] Rhetorical questions that engage the listener
+- [ ] A heartfelt or reflective moment somewhere
+- [ ] McLaren reference(s) that are self-aware
+- [ ] A strong closing that makes people want more
+- [ ] Proper use of punctuation for pacing (... — !)
+- [ ] Inline emotion markers for key delivery moments

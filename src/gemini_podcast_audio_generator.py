@@ -2,11 +2,20 @@
 """
 Gemini Podcast Audio Generator - Creates podcast audio using Google Gemini TTS
 
-Uses Gemini 2.5 Pro/Flash TTS models for high-quality, expressive speech synthesis.
-Supports SSML markup and emotion markers for immersive podcast experiences.
+IMPORTANT: Generates the ENTIRE podcast in a SINGLE TTS request to ensure
+consistent voice characteristics throughout. This prevents the "different
+people talking" issue that occurs with segment-by-segment generation.
 
-Free tier: Gemini 2.5 Flash TTS (lower quality but free)
-Pro tier: Gemini 2.5 Pro TTS (highest quality)
+Key Features:
+- Single-request generation for voice consistency (up to 32k tokens / ~24k words)
+- Audio Profile prompting for consistent character voice
+- Director's Notes for performance guidance
+- Natural pacing and breathing between segments
+
+Uses Gemini 2.5 Pro/Flash TTS models for high-quality, expressive speech synthesis.
+
+Free tier: Gemini 2.5 Flash TTS (free, good quality)
+Pro tier: Gemini 2.5 Pro TTS (paid, highest quality)
 """
 
 import argparse
@@ -154,6 +163,189 @@ def get_duration(file_path: str) -> float:
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     return float(result.stdout.strip()) if result.stdout.strip() else 0
+
+
+# =============================================================================
+# VOICE PROFILE FOR CONSISTENT PODCAST VOICE
+# =============================================================================
+
+PODCAST_VOICE_PROFILE = """
+## Audio Profile
+You are the host of "F1 Burnouts", a passionate and knowledgeable Formula 1 podcast host.
+
+Character traits:
+- Expert in F1 engineering, regulations, and history
+- Conversational and engaging, like talking to a friend
+- Witty with well-timed humor and occasional sarcasm
+- Genuinely passionate about the sport
+- Speaks with natural flow and breathing
+
+Voice characteristics:
+- Warm, confident, and authoritative
+- Natural conversational pacing - not rushed, not slow
+- Varied intonation to keep listeners engaged
+- Clear articulation but not overly formal
+
+## Director's Notes
+- Maintain consistent voice throughout the entire podcast
+- Use natural pauses between topics (like taking a breath)
+- Build energy during exciting moments, soften during reflective ones
+- Keep the same fundamental voice character from start to finish
+- Speak as one continuous monologue, not separate disconnected pieces
+
+## Performance Style
+- Conversational podcast host speaking directly to the audience
+- Natural transitions between topics
+- Occasional emphasis on key words for impact
+- Breathing pauses between paragraphs
+"""
+
+
+def build_podcast_transcript(script: dict) -> str:
+    """
+    Build a complete podcast transcript from all segments.
+
+    Combines all segments into a single flowing script with natural
+    paragraph breaks for breathing pauses.
+    """
+    segments = script.get("segments", [])
+
+    # Combine all segment text with paragraph breaks
+    paragraphs = []
+    for segment in segments:
+        text = segment.get("text", "").strip()
+        if text:
+            paragraphs.append(text)
+
+    # Join with double newlines for natural paragraph pauses
+    full_transcript = "\n\n".join(paragraphs)
+
+    return full_transcript
+
+
+def generate_full_podcast_audio(
+    script: dict,
+    output_path: str,
+    voice: str = DEFAULT_VOICE,
+    model: str = GEMINI_MODEL_FLASH,
+) -> Tuple[bool, Optional[str]]:
+    """
+    Generate the ENTIRE podcast in a single TTS request.
+
+    This ensures consistent voice characteristics throughout the podcast,
+    preventing the "different people talking" issue that occurs with
+    segment-by-segment generation.
+
+    Args:
+        script: Full podcast script dict with segments
+        output_path: Path for output MP3 file
+        voice: Gemini voice name
+        model: Gemini model to use
+
+    Returns:
+        Tuple of (success: bool, error_message: Optional[str])
+    """
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError:
+        return False, "google-genai not installed. Run: pip install google-genai"
+
+    # Get API key
+    try:
+        api_key = get_gemini_key()
+    except FileNotFoundError as e:
+        return False, str(e)
+
+    # Build the complete transcript
+    transcript = build_podcast_transcript(script)
+
+    # Estimate tokens (rough: 1 token ≈ 4 chars)
+    estimated_tokens = len(transcript) // 4
+    if estimated_tokens > 30000:
+        return (
+            False,
+            f"Script too long ({estimated_tokens} tokens). Max is ~30k tokens for single request.",
+        )
+
+    # Build the complete prompt with voice profile and transcript
+    full_prompt = f"""{PODCAST_VOICE_PROFILE}
+
+## Transcript
+Read the following podcast script naturally, as one continuous performance:
+
+{transcript}
+"""
+
+    print(
+        f"  Transcript length: {len(transcript):,} chars (~{estimated_tokens:,} tokens)"
+    )
+
+    # Initialize client
+    client = genai.Client(api_key=api_key)
+
+    # Retry loop
+    last_error = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            _rate_limit_wait()
+
+            print(f"  Generating audio (attempt {attempt + 1}/{MAX_RETRIES})...")
+
+            # Generate audio with voice profile
+            response = client.models.generate_content(
+                model=model,
+                contents=full_prompt,
+                config=types.GenerateContentConfig(
+                    response_modalities=["AUDIO"],
+                    speech_config=types.SpeechConfig(
+                        voice_config=types.VoiceConfig(
+                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                voice_name=voice,
+                            )
+                        )
+                    ),
+                ),
+            )
+
+            # Extract audio data
+            if not response.candidates:
+                return False, "No audio generated - empty response"
+
+            audio_data = response.candidates[0].content.parts[0].inline_data.data
+
+            if not audio_data:
+                return False, "No audio data in response"
+
+            # Write to WAV file first (Gemini outputs PCM)
+            wav_path = output_path.replace(".mp3", ".wav")
+            wave_file_write(wav_path, audio_data)
+
+            # Convert to MP3
+            if not convert_wav_to_mp3(wav_path, output_path):
+                return False, "Failed to convert WAV to MP3"
+
+            return True, None
+
+        except Exception as e:
+            error_str = str(e)
+            last_error = error_str
+
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                retry_match = re.search(r"retry in (\d+(?:\.\d+)?)", error_str.lower())
+                if retry_match:
+                    wait_time = float(retry_match.group(1)) + 1
+                else:
+                    wait_time = RETRY_BASE_DELAY * (2**attempt)
+
+                if attempt < MAX_RETRIES - 1:
+                    print(f"  Rate limited, waiting {wait_time:.0f}s...")
+                    time.sleep(wait_time)
+                    continue
+            else:
+                return False, f"Gemini TTS error: {error_str}"
+
+    return False, f"Max retries exceeded. Last error: {last_error}"
 
 
 def generate_audio_gemini(
@@ -332,41 +524,51 @@ def concatenate_audio(audio_files: list, output_path: str) -> bool:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate podcast audio using Google Gemini TTS"
+        description="Generate podcast audio using Google Gemini TTS",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+GENERATION MODES:
+
+  Single Request (default, RECOMMENDED):
+    Generates entire podcast in ONE TTS request for consistent voice.
+    Prevents the "different people talking" issue.
+
+  Legacy Segment Mode (--legacy):
+    Generates each segment separately then concatenates.
+    May result in inconsistent voice characteristics.
+
+EXAMPLES:
+  # Generate podcast (single request, consistent voice)
+  python3 src/gemini_podcast_audio_generator.py --project my-podcast
+
+  # Use Pro model for higher quality
+  python3 src/gemini_podcast_audio_generator.py --project my-podcast --model pro
+
+  # Preview transcript before generating
+  python3 src/gemini_podcast_audio_generator.py --project my-podcast --preview
+""",
     )
     parser.add_argument("--project", required=True, help="Project name")
     parser.add_argument(
         "--model",
         choices=["flash", "pro"],
         default="flash",
-        help="Gemini model: flash (free, fast) or pro (paid, highest quality)",
+        help="Gemini model: flash (free) or pro (paid, higher quality)",
     )
     parser.add_argument(
         "--voice",
         default=DEFAULT_VOICE,
-        help=f"Voice name (default: {DEFAULT_VOICE}). Options: {', '.join(GEMINI_VOICES.values())}",
+        help=f"Voice name (default: {DEFAULT_VOICE})",
     )
     parser.add_argument(
-        "--no-ssml",
+        "--legacy",
         action="store_true",
-        help="Disable SSML enhancement (use plain text)",
+        help="Use legacy segment-by-segment generation (may cause voice inconsistency)",
     )
     parser.add_argument(
-        "--sequential", action="store_true", help="Disable concurrent processing"
-    )
-    parser.add_argument(
-        "--workers",
-        type=int,
-        default=GEMINI_MAX_CONCURRENT,
-        help=f"Max concurrent workers (default: {GEMINI_MAX_CONCURRENT}, optimized for free tier)",
-    )
-    parser.add_argument(
-        "--skip-concat",
+        "--preview",
         action="store_true",
-        help="Skip final concatenation (segments only)",
-    )
-    parser.add_argument(
-        "--segment", type=int, help="Only generate specific segment (0-indexed)"
+        help="Preview transcript and voice profile without generating audio",
     )
     parser.add_argument(
         "--list-voices", action="store_true", help="List available voices and exit"
@@ -384,7 +586,6 @@ def main():
 
     # Setup paths
     project_dir = get_project_dir(args.project)
-    audio_dir = f"{project_dir}/audio"
     output_dir = f"{project_dir}/output"
     script_file = f"{project_dir}/script.json"
 
@@ -392,7 +593,6 @@ def main():
         print(f"Error: Script not found at {script_file}")
         sys.exit(1)
 
-    os.makedirs(audio_dir, exist_ok=True)
     os.makedirs(output_dir, exist_ok=True)
 
     # Load script
@@ -401,163 +601,127 @@ def main():
 
     # Select model
     model = GEMINI_MODEL_PRO if args.model == "pro" else GEMINI_MODEL_FLASH
-    use_ssml = not args.no_ssml
     voice = args.voice
+    segments = script.get("segments", [])
+
+    # Build transcript for display
+    transcript = build_podcast_transcript(script)
+    word_count = len(transcript.split())
+    estimated_duration = word_count / 150  # ~150 words per minute
 
     print("=" * 60)
-    print(f"Gemini Podcast Audio Generator - Project: {args.project}")
+    print(f"Gemini Podcast Audio Generator")
+    print("=" * 60)
+    print(f"Project: {args.project}")
     print(f"Model: {args.model.upper()} ({model})")
     print(f"Voice: {voice}")
-    print(f"SSML Enhancement: {'Enabled' if use_ssml else 'Disabled'}")
+    print(f"Segments: {len(segments)}")
+    print(f"Words: {word_count:,}")
+    print(f"Estimated duration: {estimated_duration:.1f} min")
     print(
-        f"Concurrency: {'Sequential' if args.sequential else f'{args.workers} workers'}"
+        f"Mode: {'Legacy (segment-by-segment)' if args.legacy else 'Single Request (consistent voice)'}"
     )
     print("=" * 60)
 
-    segments = script["segments"]
+    # Preview mode
+    if args.preview:
+        print("\n" + "=" * 60)
+        print("VOICE PROFILE")
+        print("=" * 60)
+        print(PODCAST_VOICE_PROFILE.strip())
+        print("\n" + "=" * 60)
+        print("TRANSCRIPT PREVIEW (first 500 chars)")
+        print("=" * 60)
+        print(transcript[:500] + ("..." if len(transcript) > 500 else ""))
+        print("\n" + "=" * 60)
+        print("[PREVIEW MODE] No audio generated.")
+        sys.exit(0)
 
-    # Single segment mode
-    if args.segment is not None:
-        if args.segment >= len(segments):
-            print(f"Error: Segment {args.segment} not found (max: {len(segments) - 1})")
-            sys.exit(1)
+    output_path = f"{output_dir}/final.mp3"
 
-        segment = segments[args.segment]
-        audio_path = f"{audio_dir}/segment_{args.segment:02d}.mp3"
+    # =================================================================
+    # SINGLE REQUEST MODE (default, recommended)
+    # =================================================================
+    if not args.legacy:
+        print("\nGenerating entire podcast in single request...")
+        print("(This ensures consistent voice throughout)")
 
-        print(f"\nGenerating segment {args.segment}...")
-        print(f"Context: {segment.get('context', 'N/A')}")
-        print(f"Emotion: {segment.get('emotion', 'energetic')}")
-
-        # Remove cached version to force regeneration
-        if os.path.exists(audio_path):
-            os.remove(audio_path)
-
-        success, error = generate_audio_gemini(
-            text=segment["text"],
-            output_path=audio_path,
+        success, error = generate_full_podcast_audio(
+            script=script,
+            output_path=output_path,
             voice=voice,
             model=model,
-            use_ssml=use_ssml,
-            emotion=segment.get("emotion", "energetic"),
         )
 
         if success:
-            duration = get_duration(audio_path)
-            print(f"Success! Duration: {duration:.1f}s")
-            print(f"Output: {audio_path}")
+            duration = get_duration(output_path)
+            file_size = os.path.getsize(output_path) / (1024 * 1024)
+            print(f"\n{'=' * 60}")
+            print("SUCCESS!")
+            print(f"Output: {output_path}")
+            print(f"Duration: {duration:.1f}s ({duration / 60:.1f} min)")
+            print(f"Size: {file_size:.1f} MB")
+            print(f"{'=' * 60}")
         else:
-            print(f"Failed: {error}")
+            print(f"\nFailed: {error}")
             sys.exit(1)
 
-        sys.exit(0)
+    # =================================================================
+    # LEGACY MODE (segment-by-segment, kept for compatibility)
+    # =================================================================
+    else:
+        print("\nWARNING: Legacy mode may produce inconsistent voice characteristics!")
+        print("Consider using default single-request mode instead.\n")
 
-    # Prepare all tasks
-    tasks = []
-    for i, segment in enumerate(segments):
-        audio_path = f"{audio_dir}/segment_{i:02d}.mp3"
-        tasks.append((i, segment, audio_path, voice, model, use_ssml))
+        audio_dir = f"{project_dir}/audio"
+        os.makedirs(audio_dir, exist_ok=True)
 
-    generated = 0
-    cached = 0
-    failed = 0
-    results = {}
-
-    if args.sequential:
-        # Sequential processing
-        for task in tasks:
-            idx = task[0]
-            segment = task[1]
+        # Process segments sequentially
+        for i, segment in enumerate(segments):
+            audio_path = f"{audio_dir}/segment_{i:02d}.mp3"
             context = segment.get("context", "Segment")[:30]
-            emotion = segment.get("emotion", "energetic")
+
+            # Skip if cached
+            if os.path.exists(audio_path):
+                duration = get_duration(audio_path)
+                print(f"[{i + 1}/{len(segments)}] Cached ({duration:.1f}s) - {context}")
+                continue
 
             print(
-                f"[{idx + 1}/{len(segments)}] {context} ({emotion})...",
+                f"[{i + 1}/{len(segments)}] Generating - {context}...",
                 end=" ",
                 flush=True,
             )
 
-            idx, success, duration, status = process_segment(task)
+            success, error = generate_audio_gemini(
+                text=segment["text"],
+                output_path=audio_path,
+                voice=voice,
+                model=model,
+                use_ssml=True,
+                emotion=segment.get("emotion", "energetic"),
+            )
 
-            if status == "cached":
-                print(f"Cached ({duration:.1f}s)")
-                cached += 1
-            elif success:
+            if success:
+                duration = get_duration(audio_path)
                 print(f"Done ({duration:.1f}s)")
-                generated += 1
             else:
-                print(f"Failed: {status}")
-                failed += 1
+                print(f"Failed: {error}")
+                sys.exit(1)
 
-            results[idx] = (success, duration)
-    else:
-        # Concurrent processing
-        print(f"\nProcessing {len(segments)} segments concurrently...")
-
-        with ThreadPoolExecutor(max_workers=args.workers) as executor:
-            future_to_idx = {
-                executor.submit(process_segment, task): task[0] for task in tasks
-            }
-
-            for future in as_completed(future_to_idx):
-                idx, success, duration, status = future.result()
-                segment = segments[idx]
-                context = segment.get("context", "Segment")[:30]
-                emotion = segment.get("emotion", "energetic")
-
-                if status == "cached":
-                    print(
-                        f"[{idx + 1}/{len(segments)}] Cached ({duration:.1f}s) - {context}"
-                    )
-                    cached += 1
-                elif success:
-                    print(
-                        f"[{idx + 1}/{len(segments)}] Generated ({duration:.1f}s) - {context}"
-                    )
-                    generated += 1
-                else:
-                    print(f"[{idx + 1}/{len(segments)}] Failed - {status} - {context}")
-                    failed += 1
-
-                results[idx] = (success, duration)
-
-    # Calculate total duration
-    total_duration = sum(
-        get_duration(f"{audio_dir}/segment_{i:02d}.mp3")
-        for i in range(len(segments))
-        if os.path.exists(f"{audio_dir}/segment_{i:02d}.mp3")
-    )
-
-    print(f"\n{'=' * 60}")
-    print("Segment Generation Complete")
-    print(f"Generated: {generated} | Cached: {cached} | Failed: {failed}")
-    print(
-        f"Total segment duration: {total_duration:.1f}s ({total_duration / 60:.1f} min)"
-    )
-
-    if failed > 0:
-        print(f"\nWarning: {failed} segments failed. Fix errors and re-run.")
-        sys.exit(1)
-
-    # Concatenate all segments
-    if not args.skip_concat:
-        print(f"\n{'=' * 60}")
-        print("Concatenating segments into final podcast...")
-
+        # Concatenate all segments
+        print(f"\nConcatenating {len(segments)} segments...")
         audio_files = [f"{audio_dir}/segment_{i:02d}.mp3" for i in range(len(segments))]
-        output_path = f"{output_dir}/final.mp3"
 
         if concatenate_audio(audio_files, output_path):
-            final_duration = get_duration(output_path)
-            print(f"Success! Final podcast: {output_path}")
-            print(f"Duration: {final_duration:.1f}s ({final_duration / 60:.1f} min)")
+            duration = get_duration(output_path)
+            print(f"\nSuccess! Output: {output_path}")
+            print(f"Duration: {duration:.1f}s ({duration / 60:.1f} min)")
         else:
-            print("Error: Failed to concatenate audio segments")
+            print("Error: Failed to concatenate segments")
             sys.exit(1)
-    else:
-        print(f"\nSkipped concatenation. Segments saved to: {audio_dir}/")
 
-    print(f"{'=' * 60}")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
