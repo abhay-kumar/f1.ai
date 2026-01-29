@@ -1,4 +1,4 @@
-# Create RSS.com Podcast Upload Content
+# Upload Podcast to RSS.com
 
 Generate all the content needed to manually upload a podcast episode to RSS.com.
 
@@ -172,6 +172,55 @@ Cover art:
 /Users/abhaykumar/Documents/f1.ai/projects/sustainable-fuels-podcast/output/cover_art.jpg
 ```
 
+---
+
+### Transcript
+
+Generate a WebVTT format transcript from the script segments:
+
+1. **Format**: WebVTT (.vtt) with timestamps
+2. **Clean the text**: Remove any `[emotion]` markers like `[excited]`, `[sarcastic]`, etc.
+3. **Calculate timestamps**: Use word count (~2.5 words/second) to estimate segment timing
+4. **Save to file**: `projects/{project}/output/transcript.vtt`
+
+**VTT Format**:
+```
+WEBVTT
+
+00:00:00.000 --> 00:00:22.000
+Welcome back to F1 Burnouts! I'm your host, and today we're going somewhere special...
+
+00:00:22.000 --> 00:00:45.000
+We're talking about fuel. Sustainable fuel. And before you click away thinking this is going to be some boring chemistry lecture, stay with me...
+
+00:00:45.000 --> 00:01:05.000
+So here's the deal. From 2026, every single car on the grid will run on one hundred percent sustainable fuel...
+```
+
+**Timestamp calculation**:
+- Speech rate: ~150 words per minute (2.5 words/second)
+- For each segment: `duration = word_count / 2.5`
+- Accumulate start times for each subsequent segment
+- Format: `HH:MM:SS.mmm`
+
+---
+
+## Files to Upload (Updated)
+
+Provide absolute paths for all three files:
+```
+Audio file:
+/Users/abhaykumar/Documents/f1.ai/projects/{project}/output/final.mp3
+
+Cover art:
+/Users/abhaykumar/Documents/f1.ai/projects/{project}/output/cover_art.jpg
+
+Transcript:
+/Users/abhaykumar/Documents/f1.ai/projects/{project}/output/transcript.vtt
+```
+
+---
+
 ## Notes
 
 - RSS.com requires video/audio files, MP3 is accepted directly
@@ -180,3 +229,4 @@ Cover art:
 - Episode number and title are displayed in large, bold text for visibility
 - Keep keywords to ~15-20 max for best results
 - Description can be long - RSS.com supports detailed show notes
+- Transcript must be in WebVTT format (.vtt) with proper timestamps
