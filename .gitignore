@@ -26,3 +26,6 @@ shared/reddit_ideas.json
 shared/assets/**/*.mp4
 shared/assets/**/*.mov
 shared/assets/**/*.avi
+
+# Documentation
+docs/
