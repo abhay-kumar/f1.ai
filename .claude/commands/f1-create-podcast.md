@@ -237,25 +237,28 @@ projects/{project-name}/
 
 8. **Generate Audio & Add Music**:
    ```bash
-   # Step 1: Generate complete podcast (single TTS request for consistent voice)
-   python3 src/gemini_podcast_audio_generator.py --project {name}
-   
-   # Step 2: Add intro/outro music (overwrites final.mp3 with music version)
+   # Step 1: Generate podcast audio (CHUNKED MODE - prevents voice degradation)
+   python3 src/gemini_podcast_audio_generator.py --project {name} --chunked
+
+   # Step 2: Add intro/outro music
    python3 src/podcast_music_mixer.py --project {name} \
      --music shared/music/podcast_default.mp3 \
-     --documentary \
-     --output projects/{name}/output/final.mp3
+     --documentary
    ```
-   
-   **Why Single Request?**
-   The audio generator sends the ENTIRE script in ONE TTS request with a voice profile.
-   This ensures consistent voice characteristics throughout - no more "different people talking".
-   
+
+   **Why Chunked Mode?**
+   Gemini TTS voice quality degrades after ~4 minutes of continuous generation (becomes raspy, strained).
+   The `--chunked` mode splits content into ~250-word chunks (~60-90 seconds each), keeping each TTS
+   request short enough for consistent voice quality. SSML is preserved within each chunk.
+
    **Audio Generator Options:**
+   - `--chunked` - **REQUIRED for podcasts > 5 minutes** (prevents voice degradation)
    - `--model pro` - Use Pro model (paid, highest quality)
    - `--voice Kore` - Change voice (default: Charon)
    - `--preview` - Preview transcript and voice profile
    - `--legacy` - Use old segment-by-segment mode (not recommended)
+
+   **WARNING**: Do NOT use default single-request mode for long podcasts - voice will degrade after ~4 min.
    
    **Music Mixer Options:**
    - `--documentary` - Clean intro/outro only (recommended)
@@ -417,3 +420,31 @@ Before generating audio, verify the script has:
 - [ ] A strong closing that makes people want more
 - [ ] Proper use of punctuation for pacing (... — !)
 - [ ] Inline emotion markers for key delivery moments
+
+## Technical Notes
+
+### Gemini TTS Voice Degradation
+
+**Problem**: Gemini TTS voice quality degrades after ~4 minutes of continuous generation (becomes raspy, strained, "throat infection" effect).
+
+**Solution**: Always use `--chunked` mode for podcasts longer than 5 minutes:
+```bash
+python3 src/gemini_podcast_audio_generator.py --project {name} --chunked
+```
+
+**How it works**:
+- Splits script into ~250-word chunks (~60-90 seconds each)
+- Each chunk is a separate TTS request (stays under degradation threshold)
+- SSML and emotion markers are preserved within each chunk
+- Chunks are concatenated seamlessly
+
+**Avoid**:
+- Single-request mode (default) for long podcasts
+- Legacy segment-by-segment mode (`--legacy`)
+
+### Local TTS Alternative (Not Recommended for Podcasts)
+
+Qwen3-TTS 1.7B with MLX (`src/qwen_podcast_audio_generator.py`) is available but:
+- Produces more robotic output compared to Gemini
+- No SSML support - uses `instruct` parameter instead
+- Better suited for sleep/meditation content, not energetic podcasts

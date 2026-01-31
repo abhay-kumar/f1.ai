@@ -182,16 +182,21 @@ Character traits:
 
 Voice characteristics:
 - Warm, confident, and authoritative
-- Natural conversational pacing - not rushed, not slow
+- SLOW, DELIBERATE PACING - speak at approximately 140-150 words per minute
+- Take your time with each sentence, let words breathe
 - Varied intonation to keep listeners engaged
 - Clear articulation but not overly formal
+- Natural pauses between sentences (0.5-1 second)
 
-## Director's Notes
+## Director's Notes - PACING IS CRITICAL
+- SPEAK SLOWLY AND DELIBERATELY - this is a podcast, not an audiobook on 2x speed
 - Maintain consistent voice throughout the entire podcast
-- Use natural pauses between topics (like taking a breath)
+- Use LONG natural pauses between topics (1-2 seconds, like taking a breath)
 - Build energy during exciting moments, soften during reflective ones
 - Keep the same fundamental voice character from start to finish
 - Speak as one continuous monologue, not separate disconnected pieces
+- Do NOT rush through the content - listeners need time to absorb information
+- When you see [speaking slowly], reduce pace even further
 
 ## Performance Style
 - Conversational podcast host speaking directly to the audience
@@ -522,6 +527,221 @@ def concatenate_audio(audio_files: list, output_path: str) -> bool:
     return result.returncode == 0
 
 
+# =============================================================================
+# CHUNKED MODE - Splits long segments to avoid voice degradation
+# =============================================================================
+
+# Target ~200-300 words per chunk (~60-90 seconds of audio)
+# This prevents the "voice degradation" issue that happens with long TTS requests
+CHUNK_TARGET_WORDS = 250
+CHUNK_MIN_WORDS = 150
+CHUNK_MAX_WORDS = 350
+
+
+def split_text_into_chunks(text: str, target_words: int = CHUNK_TARGET_WORDS) -> list:
+    """
+    Split text into smaller chunks at natural paragraph/sentence boundaries.
+
+    Preserves emotion markers at the start of chunks where appropriate.
+
+    Args:
+        text: Full segment text (may contain emotion markers like [excited])
+        target_words: Target words per chunk
+
+    Returns:
+        List of text chunks
+    """
+    # First split by paragraphs (double newline)
+    paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+
+    chunks = []
+    current_chunk = []
+    current_words = 0
+
+    for para in paragraphs:
+        para_words = len(para.split())
+
+        # If paragraph alone exceeds max, split it by sentences
+        if para_words > CHUNK_MAX_WORDS:
+            # Save current chunk first
+            if current_chunk:
+                chunks.append('\n\n'.join(current_chunk))
+                current_chunk = []
+                current_words = 0
+
+            # Split paragraph into sentences
+            sentences = re.split(r'(?<=[.!?])\s+', para)
+            sent_chunk = []
+            sent_words = 0
+
+            for sent in sentences:
+                sent = sent.strip()
+                if not sent:
+                    continue
+                sw = len(sent.split())
+
+                if sent_words + sw > CHUNK_MAX_WORDS and sent_chunk:
+                    chunks.append(' '.join(sent_chunk))
+                    sent_chunk = [sent]
+                    sent_words = sw
+                else:
+                    sent_chunk.append(sent)
+                    sent_words += sw
+
+            if sent_chunk:
+                chunks.append(' '.join(sent_chunk))
+
+        elif current_words + para_words > CHUNK_MAX_WORDS and current_chunk:
+            # Save current chunk and start new one
+            chunks.append('\n\n'.join(current_chunk))
+            current_chunk = [para]
+            current_words = para_words
+        else:
+            current_chunk.append(para)
+            current_words += para_words
+
+    # Don't forget last chunk
+    if current_chunk:
+        chunks.append('\n\n'.join(current_chunk))
+
+    return chunks
+
+
+def generate_chunked_podcast_audio(
+    script: dict,
+    output_dir: str,
+    voice: str = DEFAULT_VOICE,
+    model: str = GEMINI_MODEL_FLASH,
+) -> Tuple[bool, Optional[str], list]:
+    """
+    Generate podcast audio by splitting into smaller chunks.
+
+    This avoids voice degradation that occurs with very long TTS requests.
+    Each chunk is ~200-300 words (~60-90 seconds), keeping individual
+    TTS requests short enough for consistent voice quality.
+
+    Handles two scenarios:
+    1. Large segments (>350 words): Split into smaller chunks
+    2. Small segments (<150 words): Consolidate multiple segments together
+
+    Args:
+        script: Full podcast script dict with segments
+        output_dir: Directory for output audio files
+        voice: Gemini voice name
+        model: Gemini model to use
+
+    Returns:
+        Tuple of (success: bool, error_message: Optional[str], chunk_files: list)
+    """
+    segments = script.get("segments", [])
+    audio_dir = f"{output_dir}/../audio"
+    os.makedirs(audio_dir, exist_ok=True)
+
+    # First, combine all segment texts to create optimal chunks
+    # This handles both large segments (split) and small segments (consolidate)
+    all_text_parts = []
+    for segment in segments:
+        text = segment.get("text", "").strip()
+        emotion = segment.get("emotion", "energetic")
+        if text:
+            all_text_parts.append({"text": text, "emotion": emotion})
+
+    # Consolidate small segments and split large ones into ~250 word chunks
+    all_chunks = []
+    current_chunk_texts = []
+    current_chunk_words = 0
+    current_emotion = "energetic"
+
+    for part in all_text_parts:
+        text = part["text"]
+        emotion = part["emotion"]
+        words = len(text.split())
+
+        # If this single part exceeds max, we need to split it
+        if words > CHUNK_MAX_WORDS:
+            # First, save any accumulated content
+            if current_chunk_texts:
+                all_chunks.append({
+                    "text": "\n\n".join(current_chunk_texts),
+                    "emotion": current_emotion,
+                })
+                current_chunk_texts = []
+                current_chunk_words = 0
+
+            # Now split the large text
+            sub_chunks = split_text_into_chunks(text)
+            for sub_chunk in sub_chunks:
+                all_chunks.append({
+                    "text": sub_chunk,
+                    "emotion": emotion,
+                })
+        # If adding this would exceed max, save current and start new
+        elif current_chunk_words + words > CHUNK_MAX_WORDS and current_chunk_texts:
+            all_chunks.append({
+                "text": "\n\n".join(current_chunk_texts),
+                "emotion": current_emotion,
+            })
+            current_chunk_texts = [text]
+            current_chunk_words = words
+            current_emotion = emotion
+        else:
+            # Accumulate into current chunk
+            current_chunk_texts.append(text)
+            current_chunk_words += words
+            if not current_chunk_texts[:-1]:  # First text in chunk sets emotion
+                current_emotion = emotion
+
+    # Don't forget the last chunk
+    if current_chunk_texts:
+        all_chunks.append({
+            "text": "\n\n".join(current_chunk_texts),
+            "emotion": current_emotion,
+        })
+
+    print(f"\nSplit {len(segments)} segments into {len(all_chunks)} chunks")
+    print(f"Average chunk size: {sum(len(c['text'].split()) for c in all_chunks) // len(all_chunks)} words")
+    print()
+
+    # Generate audio for each chunk
+    chunk_files = []
+    total_duration = 0
+
+    for i, chunk in enumerate(all_chunks):
+        chunk_file = f"{audio_dir}/chunk_{i:03d}.mp3"
+        chunk_files.append(chunk_file)
+
+        # Check cache
+        if os.path.exists(chunk_file):
+            duration = get_duration(chunk_file)
+            total_duration += duration
+            word_count = len(chunk["text"].split())
+            print(f"[{i+1}/{len(all_chunks)}] Cached ({duration:.1f}s, {word_count} words)")
+            continue
+
+        word_count = len(chunk["text"].split())
+        print(f"[{i+1}/{len(all_chunks)}] Generating ({word_count} words)...", end=" ", flush=True)
+
+        success, error = generate_audio_gemini(
+            text=chunk["text"],
+            output_path=chunk_file,
+            voice=voice,
+            model=model,
+            use_ssml=True,
+            emotion=chunk["emotion"],
+        )
+
+        if not success:
+            return False, f"Chunk {i+1} failed: {error}", chunk_files
+
+        duration = get_duration(chunk_file)
+        total_duration += duration
+        print(f"Done ({duration:.1f}s)")
+
+    print(f"\nTotal audio duration: {total_duration:.1f}s ({total_duration/60:.1f} min)")
+
+    return True, None, chunk_files
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Generate podcast audio using Google Gemini TTS",
@@ -529,20 +749,25 @@ def main():
         epilog="""
 GENERATION MODES:
 
-  Single Request (default, RECOMMENDED):
-    Generates entire podcast in ONE TTS request for consistent voice.
-    Prevents the "different people talking" issue.
+  Chunked Mode (--chunked, RECOMMENDED for long podcasts):
+    Splits content into ~250-word chunks (~60-90 seconds each).
+    Prevents voice degradation that occurs with long TTS requests.
+    Uses SSML for natural expression within each chunk.
+
+  Single Request (default):
+    Generates entire podcast in ONE TTS request.
+    WARNING: Voice may degrade after ~4 minutes on long content.
 
   Legacy Segment Mode (--legacy):
     Generates each segment separately then concatenates.
     May result in inconsistent voice characteristics.
 
 EXAMPLES:
-  # Generate podcast (single request, consistent voice)
-  python3 src/gemini_podcast_audio_generator.py --project my-podcast
+  # Generate long podcast with chunked mode (RECOMMENDED)
+  python3 src/gemini_podcast_audio_generator.py --project my-podcast --chunked
 
   # Use Pro model for higher quality
-  python3 src/gemini_podcast_audio_generator.py --project my-podcast --model pro
+  python3 src/gemini_podcast_audio_generator.py --project my-podcast --chunked --model pro
 
   # Preview transcript before generating
   python3 src/gemini_podcast_audio_generator.py --project my-podcast --preview
@@ -564,6 +789,11 @@ EXAMPLES:
         "--legacy",
         action="store_true",
         help="Use legacy segment-by-segment generation (may cause voice inconsistency)",
+    )
+    parser.add_argument(
+        "--chunked",
+        action="store_true",
+        help="Split large segments into ~250-word chunks to prevent voice degradation (RECOMMENDED for long podcasts)",
     )
     parser.add_argument(
         "--preview",
@@ -618,9 +848,13 @@ EXAMPLES:
     print(f"Segments: {len(segments)}")
     print(f"Words: {word_count:,}")
     print(f"Estimated duration: {estimated_duration:.1f} min")
-    print(
-        f"Mode: {'Legacy (segment-by-segment)' if args.legacy else 'Single Request (consistent voice)'}"
-    )
+    if args.chunked:
+        mode_str = "Chunked (small chunks for consistent voice, RECOMMENDED)"
+    elif args.legacy:
+        mode_str = "Legacy (segment-by-segment)"
+    else:
+        mode_str = "Single Request (may degrade on long podcasts)"
+    print(f"Mode: {mode_str}")
     print("=" * 60)
 
     # Preview mode
@@ -640,9 +874,42 @@ EXAMPLES:
     output_path = f"{output_dir}/final.mp3"
 
     # =================================================================
-    # SINGLE REQUEST MODE (default, recommended)
+    # CHUNKED MODE (recommended for long podcasts)
     # =================================================================
-    if not args.legacy:
+    if args.chunked:
+        print("\nGenerating podcast in small chunks to prevent voice degradation...")
+        print("(Each chunk is ~250 words / ~60-90 seconds)")
+
+        success, error, chunk_files = generate_chunked_podcast_audio(
+            script=script,
+            output_dir=output_dir,
+            voice=voice,
+            model=model,
+        )
+
+        if not success:
+            print(f"\nFailed: {error}")
+            sys.exit(1)
+
+        # Concatenate all chunks
+        print(f"\nConcatenating {len(chunk_files)} chunks...")
+        if concatenate_audio(chunk_files, output_path):
+            duration = get_duration(output_path)
+            file_size = os.path.getsize(output_path) / (1024 * 1024)
+            print(f"\n{'=' * 60}")
+            print("SUCCESS!")
+            print(f"Output: {output_path}")
+            print(f"Duration: {duration:.1f}s ({duration / 60:.1f} min)")
+            print(f"Size: {file_size:.1f} MB")
+            print(f"{'=' * 60}")
+        else:
+            print("Error: Failed to concatenate chunks")
+            sys.exit(1)
+
+    # =================================================================
+    # SINGLE REQUEST MODE (default, may degrade on long content)
+    # =================================================================
+    elif not args.legacy:
         print("\nGenerating entire podcast in single request...")
         print("(This ensures consistent voice throughout)")
 

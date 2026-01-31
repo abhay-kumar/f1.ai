@@ -101,7 +101,7 @@ Once user confirms story selection, create the daily news video:
    
    **IMPORTANT**: The outro footage is stored at `shared/assets/daily-news/outro.mp4` and should be copied to the project's footage folder as the last segment BEFORE running the footage downloader. This ensures consistency across all daily news videos and avoids unnecessary downloads.
 
-6. **Footage Verification**: 
+6. **Footage Verification**:
    - Run `--list` first to check downloaded video titles match each news story
    - Prefer official F1 channel footage over fan channels (fan channels often have screen recordings or news anchors)
    - For team-specific footage, use subtitle search on broad official videos:
@@ -109,8 +109,10 @@ Once user confirms story selection, create the daily news video:
      yt-dlp --write-auto-sub --sub-lang en --skip-download --sub-format vtt -o /tmp/subs "URL"
      grep -i "team name" /tmp/subs*.vtt
      ```
+   - **Add 1-2 seconds buffer to subtitle timestamps** - Video visuals often lag behind narration. If subtitles mention "Cadillac" at 240s, the visual may still show the previous team. Use 241-242s instead.
    - Delete old previews (`rm previews/segNN_*.jpg`) before re-extracting after footage replacement
    - Update `footage_start` timestamps as needed
+   - **Iterate quickly**: Update timestamp in script.json → run video_assembler.py → review → repeat until correct
 
 7. **Final Output**:
    - Verify video/audio sync
@@ -146,6 +148,25 @@ Pre-downloaded footage for consistent elements is stored in `shared/assets/daily
 - `outro.mp4` - F1 racing action montage for the outro segment
 
 These assets should be copied to each new project's footage folder to avoid redundant downloads and ensure visual consistency across episodes.
+
+**IMPORTANT**: After copying intro/outro assets, ensure their segments in script.json have the `footage` field set (e.g., `"footage": "segment_00.mp4"`). The footage_downloader only adds this field for segments it downloads, not for pre-copied files. Missing `footage` fields will cause video_assembler.py to fail with `KeyError: 'footage'`.
+
+### Troubleshooting
+
+#### yt-dlp 403 Errors (HD Downloads Fail)
+YouTube requires PO Token authentication for HD formats. Install the required plugins:
+```bash
+pip install -U yt-dlp
+pip install yt-dlp-get-pot bgutil-ytdlp-pot-provider
+```
+
+#### Video Shows Wrong Team
+Subtitle timestamps don't always match visuals. Add 1-2 seconds buffer:
+- If subtitles say "Cadillac" at 240s, try 241s or 242s
+- Iterate: update script.json → run video_assembler.py → review → adjust
+
+#### KeyError: 'footage'
+Ensure all segments (including intro/outro) have the `footage` field in script.json.
 
 ### Update Reddit Ideas
 

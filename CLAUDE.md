@@ -4,12 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-F1.ai is an automated pipeline for creating F1-themed YouTube videos. It supports two formats:
+F1.ai is an automated pipeline for creating F1-themed content. It supports three formats:
 
 1. **Shorts** (60-second vertical videos, 9:16) - Quick, engaging content for mobile
 2. **Long-form** (~10-minute horizontal videos, 16:9, up to 4K) - In-depth content with references
+3. **Podcasts** (~20-minute audio episodes) - Engaging monologue-style content for RSS.com/Spotify
 
-Both formats orchestrate: script creation → fact checking → voiceover generation (Gemini TTS / ElevenLabs) → footage acquisition (yt-dlp) → video assembly (FFmpeg with GPU acceleration) → YouTube upload.
+**Video formats** orchestrate: script creation → fact checking → voiceover generation (Gemini TTS / ElevenLabs) → footage acquisition (yt-dlp) → video assembly (FFmpeg with GPU acceleration) → YouTube upload.
+
+**Podcast format** orchestrates: script creation → single-request TTS generation (Gemini) → music mixing (intro/outro) → RSS.com upload.
 
 ## Common Commands
 
@@ -87,6 +90,24 @@ python3 src/youtube_uploader_longform.py --project {name} --dry-run  # Preview m
 python3 src/youtube_uploader_longform.py --project {name}             # Upload
 ```
 
+### Podcast Commands (Audio Only)
+
+```bash
+# Generate podcast audio (RECOMMENDED: chunked mode prevents voice degradation)
+python3 src/gemini_podcast_audio_generator.py --project {name} --chunked
+python3 src/gemini_podcast_audio_generator.py --project {name} --chunked --voice Kore  # Different voice
+python3 src/gemini_podcast_audio_generator.py --project {name} --chunked --model pro   # Pro model (paid)
+python3 src/gemini_podcast_audio_generator.py --project {name} --preview  # Preview transcript
+
+# Add intro/outro music
+python3 src/podcast_music_mixer.py --project {name} \
+  --music shared/music/podcast_default.mp3 \
+  --documentary
+
+# Preview music placement without processing
+python3 src/podcast_music_mixer.py --project {name} --dry-run
+```
+
 ## Architecture
 
 **Pipeline Flow:**
@@ -98,6 +119,8 @@ script.json → fact_check → audio/*.mp3 → footage/*.mp4 → previews/*.jpg 
 - `config.py` - Centralized settings, API keys, F1 team colors, video specs (shorts + long-form)
 - `fact_checker.py` - Script validation with knowledge base, web search, and **reference validation**
 - `audio_generator.py` - Gemini TTS (default, free) / ElevenLabs TTS with caching and **concurrent processing**
+- `gemini_podcast_audio_generator.py` - **Podcast**: Single-request TTS for voice consistency
+- `podcast_music_mixer.py` - **Podcast**: Intro/outro music mixing with FFmpeg
 - `footage_downloader.py` - yt-dlp YouTube search/download with **concurrent downloads** (shorts only)
 - `stock_image_fetcher.py` - Pexels/Unsplash API for stock photos (long-form)
 - `image_video_assembler.py` - **Long-form**: Intelligent visual routing with images, talking head, YouTube clips, quotes, and Veo3
@@ -107,7 +130,7 @@ script.json → fact_check → audio/*.mp3 → footage/*.mp4 → previews/*.jpg 
 - `youtube_uploader.py` - Shorts: OAuth upload with #Shorts hashtag
 - `youtube_uploader_longform.py` - Long-form: Standard video upload with **references in description**
 
-**Project Structure:**
+**Project Structure (Video):**
 ```
 projects/{name}/
 ├── script.json      # Segments with text, footage_query, footage_start
@@ -118,9 +141,19 @@ projects/{name}/
 └── upload_info.json # YouTube video ID and URL after upload
 ```
 
+**Project Structure (Podcast):**
+```
+projects/{name}/
+├── script.json           # Segments with text, context, emotion
+└── output/
+    ├── final.mp3         # Final podcast with intro/outro music
+    ├── cover_art.jpg     # Podcast cover (1400x1400 or 3000x3000)
+    └── transcript.vtt    # WebVTT transcript for RSS.com
+```
+
 **External Dependencies:**
 - ffmpeg/ffprobe (video processing)
-- yt-dlp (YouTube download - for shorts)
+- yt-dlp (YouTube download - for shorts) + PO Token plugins (see below)
 - Google Gemini TTS API (free tier, `pip install google-genai`)
 - ElevenLabs API (TTS, paid fallback)
 - Pexels API (stock images - for long-form)
@@ -148,9 +181,11 @@ projects/{name}/
    yt-dlp --write-auto-sub --sub-lang en --skip-download --sub-format vtt -o /tmp/subs "https://youtube.com/watch?v=VIDEO_ID"
    grep -i "alpine" /tmp/subs*.vtt  # Shows timestamps where "alpine" is mentioned
    ```
-4. **Delete previews before re-extracting** - Preview images are cached. After replacing footage, delete old previews (`rm previews/segNN_*.jpg`) before running preview_extractor, otherwise stale images will be shown.
-5. **Delete footage before re-downloading** - `yt-dlp` may skip download if a file already exists at the output path. Always `rm` the old file first when re-downloading a segment.
-6. **Use `--list` to verify downloads** - After bulk download, run `--list` to see the actual YouTube video titles. This catches mismatches instantly without needing to open preview images (e.g., "Scuderia Ferrari SF-26" when you wanted Alpine).
+4. **Add 1-2 seconds buffer to subtitle timestamps** - Video content often doesn't match narration exactly. When subtitles mention a team at timestamp X, the visual may still show the previous team for 1-2 seconds. Always add a small buffer (e.g., use 242s instead of 240s) to ensure the correct team is visible when the segment starts.
+5. **Delete previews before re-extracting** - Preview images are cached. After replacing footage, delete old previews (`rm previews/segNN_*.jpg`) before running preview_extractor, otherwise stale images will be shown.
+6. **Delete footage before re-downloading** - `yt-dlp` may skip download if a file already exists at the output path. Always `rm` the old file first when re-downloading a segment.
+7. **Use `--list` to verify downloads** - After bulk download, run `--list` to see the actual YouTube video titles. This catches mismatches instantly without needing to open preview images (e.g., "Scuderia Ferrari SF-26" when you wanted Alpine).
+8. **Ensure all segments have `footage` key** - The video_assembler requires every segment to have a `footage` field in script.json. The footage_downloader adds this automatically for downloaded segments, but pre-copied assets (intro/outro) must have it added manually.
 
 ## Performance Features
 
@@ -246,6 +281,41 @@ python3 src/fact_checker.py --project {name} --strict  # Exit non-zero if unveri
 - `references`: Sources for factual claims - displayed in end credits and description
 - `references_summary`: Consolidated source list for the entire video
 
+### Podcast Format
+
+```json
+{
+  "title": "F1 Burnouts: The Fuel Revolution",
+  "format": "podcast",
+  "duration_target": 1200,
+  "tts_engine": "gemini",
+  "voice": "Charon",
+  "host": {
+    "name": "Host",
+    "description": "The host of F1 Burnouts - engineering expert and F1 historian"
+  },
+  "segments": [
+    {
+      "id": 1,
+      "text": "Welcome back to F1 Burnouts! Today we're diving into...",
+      "context": "Intro hook",
+      "emotion": "energetic"
+    },
+    {
+      "id": 2,
+      "text": "[sarcastic] And in news that shocked absolutely no one...",
+      "context": "Main topic",
+      "emotion": "humorous"
+    }
+  ]
+}
+```
+
+**Key Fields:**
+- `emotion`: Segment mood (energetic, intrigued, contemplative, humorous, sarcastic, heartfelt, serious, passionate)
+- `context`: Editorial note for organization (not spoken)
+- Inline emotion markers: `[excited]`, `[sarcastic]`, `[whispering]`, `[laughing]`, etc.
+
 ## Long-Form Video Features
 
 - **Stock Image Approach**: Uses Pexels/Unsplash photos instead of YouTube footage
@@ -259,6 +329,71 @@ python3 src/fact_checker.py --project {name} --strict  # Exit non-zero if unveri
 - **Reference Tracking**: Every factual claim should have a source
 - **YouTube Chapters**: Generated from section names
 - **Description with Sources**: All references included in upload
+
+## Podcast Features
+
+- **Chunked TTS Generation**: Use `--chunked` mode to split content into ~250-word chunks (~60-90 seconds each) - prevents voice degradation on long podcasts
+- **Voice Profile**: Character traits, performance style, and director's notes maintain personality
+- **Documentary Music Mode**: Clean voice content with music only at intro (12s) and outro (10s)
+- **Loudness Normalization**: Output normalized to -16 LUFS for podcast standards
+- **WebVTT Transcripts**: Auto-generated for RSS.com upload
+- **Available Voices**: Charon (default), Kore, Puck, Zephyr, Enceladus, Aoede
+- **Emotion Markers**: Inline `[excited]`, `[sarcastic]`, `[whispering]` for expressive delivery
+- **SSML Enhancement**: Auto-applied pauses, emphasis, and prosody via `ssml_generator.py`
+
+### Gemini TTS Voice Degradation Fix
+
+**Problem**: Gemini TTS voice quality degrades after ~4 minutes of continuous generation (becomes raspy, strained, "throat infection" effect).
+
+**Solution**: Use `--chunked` mode which splits content into ~250-word chunks:
+```bash
+# RECOMMENDED for podcasts > 5 minutes
+python3 src/gemini_podcast_audio_generator.py --project {name} --chunked
+
+# Then add music
+python3 src/podcast_music_mixer.py --project {name} --music shared/music/podcast_default.mp3 --documentary
+```
+
+**Why it works**: Each TTS request stays short enough (~60-90 seconds) to maintain consistent voice quality throughout. SSML is preserved within each chunk.
+
+**Avoid**: Single-request mode (`--legacy` or default) for podcasts longer than ~5 minutes.
+
+### Local TTS Alternative (Qwen3)
+
+Qwen3-TTS 1.7B with MLX is available for local generation but produces more robotic output:
+- No SSML support - uses `instruct` parameter for emotion control
+- Good for sleep/meditation content, not ideal for energetic podcasts
+- Use `src/qwen_podcast_audio_generator.py` if needed
+
+### Podcast Music
+
+Default track: `shared/music/podcast_default.mp3` (symlink to `f1_invincible.mp3`)
+
+Music placement:
+- **Intro**: 0-12s at 80% volume, fades as voice starts
+- **Content**: Pure voice, no background music
+- **Outro**: Last 10s, music swells from 25% to 70% after voice ends
+
+## yt-dlp Setup (Required for HD Downloads)
+
+YouTube requires PO Token authentication for HD formats (720p+). Without these plugins, downloads fail with 403 errors.
+
+**Required installation:**
+```bash
+pip install -U yt-dlp
+pip install yt-dlp-get-pot bgutil-ytdlp-pot-provider
+```
+
+**Symptoms of missing plugins:**
+- Downloads fail with "HTTP Error 403: Forbidden"
+- Warning about "SABR streaming" in yt-dlp output
+- Only 360p format available instead of HD
+
+**Verification:**
+```bash
+yt-dlp --version  # Should be 2026.x or later
+pip list | grep yt-dlp  # Should show yt-dlp, yt-dlp-get-pot, bgutil-ytdlp-pot-provider
+```
 
 ## API Keys Setup
 
