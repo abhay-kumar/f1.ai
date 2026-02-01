@@ -41,7 +41,7 @@ Once user confirms story selection, create the daily news video:
      "segments": [
        {
          "id": 1,
-         "text": "Welcome to F1 Daily News, your sixty-second briefing on everything Formula One. It's [date]. Here's what you need to know.",
+         "text": "Welcome to F1 Daily News, your sixty-second briefing on everything Formula One. It's [month] [day]. Here's what you need to know.",
          "context": "Intro - establish daily news format",
          "footage_query": "F1 2026 cars grid formation",
          "footage_start": 10
@@ -59,6 +59,7 @@ Once user confirms story selection, create the daily news video:
    ```
 
 3. **Script Guidelines**:
+   - **Intro date format**: Use only month and day (e.g., "February first"), do NOT include the weekday (no "Saturday", "Monday", etc.)
    - Keep each news item to 1-2 crisp sentences. If text wraps to 8+ lines, the assembler auto-splits into two timed parts at a natural break point — part 1 shows first, then gets replaced by part 2. Still prefer shorter segments when possible.
    - Use present tense for immediacy ("Ferrari reveals...", "Hamilton admits...")
    - Include specific details (names, numbers, quotes)
@@ -150,6 +151,42 @@ Pre-downloaded footage for consistent elements is stored in `shared/assets/daily
 These assets should be copied to each new project's footage folder to avoid redundant downloads and ensure visual consistency across episodes.
 
 **IMPORTANT**: After copying intro/outro assets, ensure their segments in script.json have the `footage` field set (e.g., `"footage": "segment_00.mp4"`). The footage_downloader only adds this field for segments it downloads, not for pre-copied files. Missing `footage` fields will cause video_assembler.py to fail with `KeyError: 'footage'`.
+
+### Composite Segments (Image + Video)
+
+When a story benefits from showing both a static image AND real footage (e.g., Antonov plane photo + Aston Martin on track):
+
+1. **Create assets folder**: `mkdir -p projects/{project}/assets`
+2. **Save the image** to `projects/{project}/assets/`
+3. **Download source video** (e.g., official F1 shakedown) to `projects/{project}/assets/`
+4. **Find timestamp** using subtitle search:
+   ```bash
+   yt-dlp --write-auto-sub --sub-lang en --skip-download --sub-format vtt -o /tmp/subs "VIDEO_URL"
+   grep -i "team name" /tmp/subs*.vtt
+   ```
+5. **Create composite** using FFmpeg with blurred background:
+   ```bash
+   # Image part (2-4 seconds with Ken Burns zoom)
+   ffmpeg -y -loop 1 -i assets/image.jpg -vf "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,zoompan=z='min(zoom+0.002,1.15)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=60:s=1080x1920:fps=30" -t 2 -c:v h264_videotoolbox -pix_fmt yuv420p -r 30 /tmp/image_part.mp4
+   
+   # Video part with BLURRED BACKGROUND (not black bars or stretched)
+   ffmpeg -y -ss {timestamp} -i assets/source_video.mp4 -t 12 -filter_complex "
+   [0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=20:20[bg];
+   [0:v]scale=1080:-2[fg];
+   [bg][fg]overlay=(W-w)/2:(H-h)/2
+   " -c:v h264_videotoolbox -pix_fmt yuv420p -r 30 -an /tmp/video_part.mp4
+   
+   # Concatenate
+   echo "file '/tmp/image_part.mp4'" > /tmp/concat.txt
+   echo "file '/tmp/video_part.mp4'" >> /tmp/concat.txt
+   ffmpeg -y -f concat -safe 0 -i /tmp/concat.txt -c copy footage/segment_XX.mp4
+   ```
+
+**Key rules for composite segments:**
+- **Image duration**: 2-4 seconds (shorter for supporting visuals, longer for key images)
+- **Video duration**: Create 2-3 seconds LONGER than needed to avoid freeze at end
+- **Blurred background**: Use the filter above - NOT black bars or stretched video
+- **Update script.json**: Set `footage_start: 0` since composite starts from beginning
 
 ### Troubleshooting
 
