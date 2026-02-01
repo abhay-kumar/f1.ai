@@ -187,6 +187,26 @@ projects/{name}/
 7. **Use `--list` to verify downloads** - After bulk download, run `--list` to see the actual YouTube video titles. This catches mismatches instantly without needing to open preview images (e.g., "Scuderia Ferrari SF-26" when you wanted Alpine).
 8. **Ensure all segments have `footage` key** - The video_assembler requires every segment to have a `footage` field in script.json. The footage_downloader adds this automatically for downloaded segments, but pre-copied assets (intro/outro) must have it added manually.
 
+## Shorts: 16:9 Video in 9:16 Frame (Blurred Background)
+
+When using horizontal (16:9) footage in vertical (9:16) shorts, use a **blurred background** instead of black bars or stretching:
+
+```bash
+# FFmpeg filter for blurred background effect (like typical YouTube Shorts)
+ffmpeg -y -ss {start} -i source.mp4 -t {duration} -filter_complex "
+[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=20:20[bg];
+[0:v]scale=1080:-2[fg];
+[bg][fg]overlay=(W-w)/2:(H-h)/2
+" -c:v h264_videotoolbox -pix_fmt yuv420p -r 30 -an output.mp4
+```
+
+**How it works:**
+1. Creates a blurred, scaled-up version of the video as background (`[bg]`)
+2. Scales the original video to fit width (`[fg]`)
+3. Overlays the sharp video centered on the blurred background
+
+**Important:** Always create footage 2-3 seconds longer than the audio duration to avoid freeze at the end of segments.
+
 ## Performance Features
 
 ### Concurrency
