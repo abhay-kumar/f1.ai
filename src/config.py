@@ -31,6 +31,15 @@ AUDIO_BITRATE = "192k"
 OUTPUT_WIDTH = 1080
 OUTPUT_HEIGHT = 1920  # 9:16 vertical
 
+# YouTube Shorts Safe Zone - bottom margin to avoid UI overlap
+# YouTube overlays: title, channel name, "Promote" button, progress bar
+# 320px keeps text above all UI elements on mobile and web
+SHORTS_BOTTOM_MARGIN = 320
+
+# Max lines of text before splitting into two timed parts
+# With 320px bottom margin, 5 lines fits comfortably in the safe zone
+SHORTS_MAX_TEXT_LINES = 5
+
 # Audio Pace Config
 SHORTS_AUDIO_SPEED = 1.25  # 25% faster for punchy short-form delivery
 
