@@ -31,6 +31,8 @@ from src.config import (
     MUSIC_VOLUME,
     OUTPUT_HEIGHT,
     OUTPUT_WIDTH,
+    SHORTS_BOTTOM_MARGIN,
+    SHORTS_MAX_TEXT_LINES,
     VIDEO_BITRATE,
     get_project_dir,
 )
@@ -214,109 +216,109 @@ def create_segment_video(
 
     line_height = int(font_size * 1.2)
 
-    # For very long text (8+ lines), show text in two timed parts at the bottom.
-    # Part 1 displays first, then gets replaced by part 2 at a natural break point.
+    # For long text (5+ lines), split into multiple timed parts.
+    # Each part displays sequentially, timed proportionally to character count.
     drawtext_filters = []
 
-    if len(lines) >= 8:
+    if len(lines) >= SHORTS_MAX_TEXT_LINES:
         text = segment["text"]
-        max_display_lines = 7
-        break_chars = [". ", ", ", "; ", " - ", " — "]
-        part1_text = None
-        part2_text = None
+        max_lines_per_part = SHORTS_MAX_TEXT_LINES - 1  # 4 lines max per part
 
-        # Try with strict limit first, then relax if no split found
-        for limit in (max_display_lines, max_display_lines + 2):
-            for bc in break_chars:
-                positions = []
-                start = 0
-                while True:
-                    pos = text.find(bc, start)
-                    if pos == -1:
-                        break
-                    positions.append(pos + len(bc))
-                    start = pos + 1
-                for pos in reversed(positions):
-                    candidate1 = text[:pos].rstrip()
-                    candidate2 = text[pos:].strip()
-                    lines1 = wrap_text(candidate1, max_chars=25)
-                    lines2 = wrap_text(candidate2, max_chars=25)
-                    if (
-                        len(lines1) <= limit
-                        and len(lines2) <= limit
-                        and len(lines1) >= 2
-                    ):
-                        part1_text = candidate1
-                        part2_text = candidate2
-                        break
-                if part1_text:
+        # Split text into parts that each fit within max_lines_per_part
+        parts = []
+        remaining = text.strip()
+
+        while remaining:
+            words = remaining.split()
+
+            # Find the longest prefix that fits within max_lines_per_part
+            best_split = 0
+            for i in range(1, len(words) + 1):
+                candidate = " ".join(words[:i])
+                if len(wrap_text(candidate, max_chars=25)) <= max_lines_per_part:
+                    best_split = i
+                else:
                     break
-            if part1_text:
-                break
 
-        if part1_text and part2_text:
-            total_chars = len(part1_text) + len(part2_text)
-            switch_time = audio_duration * (len(part1_text) / total_chars)
+            if best_split == 0:
+                # Single word too long - just take it
+                best_split = 1
 
-            part1_lines = wrap_text(part1_text, max_chars=25)
-            part2_lines = wrap_text(part2_text, max_chars=25)
+            # Prefer to split at sentence/clause boundaries if possible
+            candidate_text = " ".join(words[:best_split])
 
-            def _part_font_size(num_lines):
-                if num_lines > 3:
-                    return 52
-                elif num_lines > 2:
-                    return 60
-                return base_font_size
+            # Look for natural break points within candidate
+            for boundary in [". ", "! ", "? ", ", ", "; ", " - "]:
+                pos = candidate_text.rfind(boundary)
+                if pos > len(candidate_text) * 0.3:  # At least 30% through
+                    test_part = candidate_text[: pos + len(boundary)].strip()
+                    if len(wrap_text(test_part, max_chars=25)) >= 2:  # At least 2 lines
+                        candidate_text = test_part
+                        best_split = len(candidate_text.split())
+                        break
 
-            # Part 1: show from 0 to switch_time
-            p1_fs = _part_font_size(len(part1_lines))
-            p1_lh = int(p1_fs * 1.2)
-            p1_start_y = OUTPUT_HEIGHT - 120 - len(part1_lines) * p1_lh
-            for i, line in enumerate(part1_lines):
+            part_text = " ".join(words[:best_split])
+            parts.append(part_text)
+            remaining = " ".join(words[best_split:]).strip()
+
+        # Calculate timing for each part based on character proportion
+        total_chars = sum(len(p) for p in parts)
+
+        def _part_font_size(num_lines):
+            if num_lines > 3:
+                return 52
+            elif num_lines > 2:
+                return 60
+            return base_font_size
+
+        # Generate drawtext filters for each part
+        cumulative_time = 0.0
+        for part_idx, part_text in enumerate(parts):
+            part_lines = wrap_text(part_text, max_chars=25)
+            part_duration = audio_duration * (len(part_text) / total_chars)
+            start_time_part = cumulative_time
+            end_time_part = cumulative_time + part_duration
+            cumulative_time = end_time_part
+
+            p_fs = _part_font_size(len(part_lines))
+            p_lh = int(p_fs * 1.2)
+            p_start_y = OUTPUT_HEIGHT - SHORTS_BOTTOM_MARGIN - len(part_lines) * p_lh
+
+            for i, line in enumerate(part_lines):
                 escaped_line = escape_text_for_ffmpeg(line)
-                y_pos = p1_start_y + (i * p1_lh)
+                y_pos = p_start_y + (i * p_lh)
+
+                # Enable condition: show this part during its time window
+                if part_idx == 0:
+                    enable_cond = f"lt(t,{end_time_part:.2f})"
+                elif part_idx == len(parts) - 1:
+                    enable_cond = f"gte(t,{start_time_part:.2f})"
+                else:
+                    enable_cond = (
+                        f"gte(t,{start_time_part:.2f})*lt(t,{end_time_part:.2f})"
+                    )
+
+                # Shadow
                 drawtext_filters.append(
                     f"drawtext=text='{escaped_line}':"
                     f"fontfile={f1_font}:"
-                    f"fontsize={p1_fs}:fontcolor=black@0.5:"
+                    f"fontsize={p_fs}:fontcolor=black@0.5:"
                     f"x=(w-text_w)/2+3:y={y_pos}+3:"
-                    f"enable='lt(t,{switch_time:.2f})'"
+                    f"enable='{enable_cond}'"
                 )
+                # Main text
                 drawtext_filters.append(
                     f"drawtext=text='{escaped_line}':"
                     f"fontfile={f1_font}:"
-                    f"fontsize={p1_fs}:fontcolor={team_color}:"
+                    f"fontsize={p_fs}:fontcolor={team_color}:"
                     f"x=(w-text_w)/2:y={y_pos}:"
-                    f"enable='lt(t,{switch_time:.2f})'"
+                    f"enable='{enable_cond}'"
                 )
 
-            # Part 2: show from switch_time to end
-            p2_fs = _part_font_size(len(part2_lines))
-            p2_lh = int(p2_fs * 1.2)
-            p2_start_y = OUTPUT_HEIGHT - 120 - len(part2_lines) * p2_lh
-            for i, line in enumerate(part2_lines):
-                escaped_line = escape_text_for_ffmpeg(line)
-                y_pos = p2_start_y + (i * p2_lh)
-                drawtext_filters.append(
-                    f"drawtext=text='{escaped_line}':"
-                    f"fontfile={f1_font}:"
-                    f"fontsize={p2_fs}:fontcolor=black@0.5:"
-                    f"x=(w-text_w)/2+3:y={y_pos}+3:"
-                    f"enable='gte(t,{switch_time:.2f})'"
-                )
-                drawtext_filters.append(
-                    f"drawtext=text='{escaped_line}':"
-                    f"fontfile={f1_font}:"
-                    f"fontsize={p2_fs}:fontcolor={team_color}:"
-                    f"x=(w-text_w)/2:y={y_pos}:"
-                    f"enable='gte(t,{switch_time:.2f})'"
-                )
-
-    # Default: all text at the bottom (for <8 lines or if no break point found)
+    # Default: all text at the bottom (for <5 lines or if no break point found)
     if not drawtext_filters:
         total_text_height = len(lines) * line_height
-        bottom_margin = 120
-        start_y = OUTPUT_HEIGHT - bottom_margin - total_text_height
+        start_y = OUTPUT_HEIGHT - SHORTS_BOTTOM_MARGIN - total_text_height
 
         for i, line in enumerate(lines):
             escaped_line = escape_text_for_ffmpeg(line)
