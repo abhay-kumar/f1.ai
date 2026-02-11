@@ -43,6 +43,7 @@ Once user confirms story selection, create the daily news video:
          "id": 1,
          "text": "Welcome to F1 Daily News, your sixty-second briefing on everything Formula One. It's [month] [day]. Here's what you need to know.",
          "context": "Intro - establish daily news format",
+         "visual": "F1 2026 cars lined up on the grid or driving in formation, wide shot",
          "footage_query": "F1 2026 cars grid formation",
          "footage_start": 10
        },
@@ -51,6 +52,7 @@ Once user confirms story selection, create the daily news video:
          "id": N,
          "text": "That's your F1 Daily News. Subscribe, hit the bell, and drop a comment with your thoughts. See you tomorrow!",
          "context": "Outro - CTA for subscribe/like/comment (reusable)",
+         "visual": "High-speed F1 racing action montage, multiple cars battling on track",
          "footage_query": "F1 racing action montage",
          "footage_start": 25
        }
@@ -60,6 +62,13 @@ Once user confirms story selection, create the daily news video:
 
 3. **Script Guidelines**:
    - **Intro date format**: Use only month and day (e.g., "February first"), do NOT include the weekday (no "Saturday", "Monday", etc.)
+   - **`visual` (storyboard)**: Describe what the viewer should SEE on screen for each segment. This is NOT a search query — it describes the intended visual scene. Be specific about:
+     - Subject: which car, driver, team, or object
+     - Shot type: aerial, onboard, pit lane, close-up, wide shot, trackside
+     - Setting: which track, factory, desert, rain, night
+     - Example: "Close-up of the McLaren MCL-40 papaya livery in Bahrain pit lane"
+     - Example: "Aerial shot of Bahrain circuit with multiple F1 cars on track, desert setting"
+     - Keep to 1-2 sentences per segment
    - Keep each news item to 1-2 crisp sentences. If text wraps to 8+ lines, the assembler auto-splits into two timed parts at a natural break point — part 1 shows first, then gets replaced by part 2. Still prefer shorter segments when possible.
    - Use present tense for immediacy ("Ferrari reveals...", "Hamilton admits...")
    - Include specific details (names, numbers, quotes)

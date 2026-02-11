@@ -94,8 +94,9 @@ BAD_KEYWORDS = [
 ]
 
 
-def enhance_query(query: str) -> str:
-    """Enhance query to target official F1 B-roll content."""
+def enhance_query(query: str, visual: str = "") -> str:
+    """Enhance query to target official F1 B-roll content.
+    Uses visual description to add specificity when available."""
     query_lower = query.lower()
 
     has_good = any(kw in query_lower for kw in GOOD_KEYWORDS)
@@ -105,6 +106,29 @@ def enhance_query(query: str) -> str:
 
     if not has_f1:
         enhanced = f"{query} F1"
+
+    # Extract shot-type keywords from visual description
+    if visual:
+        visual_lower = visual.lower()
+        shot_keywords = [
+            "aerial",
+            "onboard",
+            "pit lane",
+            "podium",
+            "close-up",
+            "wide shot",
+            "cockpit",
+            "garage",
+            "grid",
+            "factory",
+            "overhead",
+            "trackside",
+            "flyover",
+        ]
+        for keyword in shot_keywords:
+            if keyword in visual_lower and keyword not in query_lower:
+                enhanced = f"{enhanced} {keyword}"
+                break
 
     if not has_good:
         if "race" in query_lower or "gp" in query_lower:
@@ -120,8 +144,8 @@ def enhance_query(query: str) -> str:
     return enhanced
 
 
-def score_result(title: str, channel: str, query: str = "") -> float:
-    """Score a search result (higher = better). Includes query relevance if provided."""
+def score_result(title: str, channel: str, query: str = "", visual: str = "") -> float:
+    """Score a search result (higher = better). Includes query and visual relevance."""
     title_lower = title.lower()
     channel_lower = channel.lower()
 
@@ -144,24 +168,23 @@ def score_result(title: str, channel: str, query: str = "") -> float:
             score -= 0.25
 
     # Query relevance: how many significant query words appear in the title
+    filler = {
+        "f1",
+        "formula",
+        "1",
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "of",
+        "in",
+        "at",
+        "for",
+        "to",
+        "on",
+    }
     if query:
-        # Strip common filler words that don't indicate relevance
-        filler = {
-            "f1",
-            "formula",
-            "1",
-            "the",
-            "a",
-            "an",
-            "and",
-            "or",
-            "of",
-            "in",
-            "at",
-            "for",
-            "to",
-            "on",
-        }
         query_words = [
             w for w in query.lower().split() if w not in filler and len(w) > 1
         ]
@@ -169,6 +192,16 @@ def score_result(title: str, channel: str, query: str = "") -> float:
             matches = sum(1 for w in query_words if w in title_lower)
             relevance = matches / len(query_words)
             score += relevance * 0.15  # Up to +0.15 for full match
+
+    # Visual description relevance
+    if visual:
+        visual_words = [
+            w for w in visual.lower().split() if w not in filler and len(w) > 2
+        ]
+        if visual_words:
+            matches = sum(1 for w in visual_words if w in title_lower)
+            visual_relevance = matches / len(visual_words)
+            score += visual_relevance * 0.10  # Up to +0.10 for visual match
 
     return max(0, min(1, score))
 
@@ -191,12 +224,14 @@ def search_youtube(query, max_results=3):
     return videos
 
 
-def search_youtube_enhanced(query: str, max_results: int = 8) -> List[Dict]:
+def search_youtube_enhanced(
+    query: str, max_results: int = 8, visual: str = ""
+) -> List[Dict]:
     """
     Search YouTube with enhanced query and metadata extraction.
     Returns results sorted by quality score.
     """
-    enhanced = enhance_query(query)
+    enhanced = enhance_query(query, visual)
 
     # yt-dlp command to get title, id, channel, duration
     cmd = [
@@ -219,8 +254,8 @@ def search_youtube_enhanced(query: str, max_results: int = 8) -> List[Dict]:
         if len(parts) >= 4:
             title, video_id, channel, duration = parts[0], parts[1], parts[2], parts[3]
 
-            # Score this result (pass original query for relevance scoring)
-            quality_score = score_result(title, channel, query)
+            # Score this result (pass original query and visual for relevance scoring)
+            quality_score = score_result(title, channel, query, visual)
 
             # Skip obviously bad content
             if quality_score < 0.2:
@@ -305,9 +340,12 @@ def download_segment_enhanced(
         return True, None
 
     query = segment.get("footage_query", segment.get("text", "")[:50])
+    visual = segment.get("visual", "")
 
     # Get ranked candidates
-    candidates = search_youtube_enhanced(query, max_results=max_candidates + 3)
+    candidates = search_youtube_enhanced(
+        query, max_results=max_candidates + 3, visual=visual
+    )
 
     if not candidates:
         return False, "No search results"
@@ -369,9 +407,10 @@ def download_segment_smart(
         return idx, True, "cached", None, "cached"
 
     query = segment.get("footage_query", segment.get("text", "")[:50])
+    visual = segment.get("visual", "")
 
     # Get ranked candidates
-    candidates = search_youtube_enhanced(query, max_results=5)
+    candidates = search_youtube_enhanced(query, max_results=5, visual=visual)
 
     if not candidates:
         return idx, False, None, "No search results", None
@@ -475,6 +514,8 @@ def main():
             if "footage_title" in seg:
                 print(f"    Title: {seg['footage_title'][:60]}")
             print(f"    Text: {seg['text'][:50]}...")
+            if seg.get("visual"):
+                print(f"    Visual: {seg['visual'][:60]}")
             if "footage_query" in seg:
                 print(f"    Query: {seg['footage_query']}")
             print()
@@ -518,11 +559,14 @@ def main():
         else:
             # Search with enhanced ranking
             query = args.query or segment.get("footage_query", segment["text"][:50])
+            visual = segment.get("visual", "")
             print(f"Original query: {query}")
-            print(f"Enhanced query: {enhance_query(query)}")
+            if visual:
+                print(f"Visual: {visual}")
+            print(f"Enhanced query: {enhance_query(query, visual)}")
             print("-" * 60)
 
-            videos = search_youtube_enhanced(query, max_results=8)
+            videos = search_youtube_enhanced(query, max_results=8, visual=visual)
             print(f"{'Score':<6} {'Channel':<25} {'Title'}")
             print("-" * 60)
             for i, v in enumerate(videos):

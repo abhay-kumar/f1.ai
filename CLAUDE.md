@@ -10,7 +10,7 @@ F1.ai is an automated pipeline for creating F1-themed content. It supports three
 2. **Long-form** (~10-minute horizontal videos, 16:9, up to 4K) - In-depth content with references
 3. **Podcasts** (~20-minute audio episodes) - Engaging monologue-style content for RSS.com/Spotify
 
-**Video formats** orchestrate: script creation → fact checking → voiceover generation (Gemini TTS / ElevenLabs) → footage acquisition (yt-dlp) → video assembly (FFmpeg with GPU acceleration) → YouTube upload.
+**Video formats** orchestrate: script creation → fact checking → voiceover generation (Gemini TTS / ElevenLabs) → footage acquisition (yt-dlp) → video assembly (FFmpeg with GPU acceleration) → YouTube + Instagram upload.
 
 **Podcast format** orchestrates: script creation → single-request TTS generation (Gemini) → music mixing (intro/outro) → RSS.com upload.
 
@@ -57,9 +57,11 @@ python3 src/video_assembler.py --project {name}
 python3 src/video_assembler.py --project {name} --encoder nvenc  # NVIDIA GPU
 python3 src/video_assembler.py --project {name} --encoder cpu    # CPU fallback
 
-# Upload short to YouTube
+# Upload short to YouTube + Instagram
 python3 src/youtube_uploader.py --project {name} --dry-run      # Preview metadata
-python3 src/youtube_uploader.py --project {name}                 # Upload
+python3 src/youtube_uploader.py --project {name}                 # Upload to YouTube
+python3 src/instagram_uploader.py --project {name} --dry-run    # Preview caption
+python3 src/instagram_uploader.py --project {name}               # Upload to Instagram
 ```
 
 ### Long-Form Commands (16:9 Horizontal, 4K/HD)
@@ -128,6 +130,7 @@ script.json → fact_check → audio/*.mp3 → footage/*.mp4 → previews/*.jpg 
 - `video_assembler.py` - Shorts: 9:16 vertical FFmpeg composition with GPU acceleration
 - `video_assembler_longform.py` - Long-form: 16:9 horizontal with YouTube footage (legacy)
 - `youtube_uploader.py` - Shorts: OAuth upload with #Shorts hashtag
+- `instagram_uploader.py` - Shorts: Instagram Reels upload via instagrapi
 - `youtube_uploader_longform.py` - Long-form: Standard video upload with **references in description**
 
 **Project Structure (Video):**
@@ -138,7 +141,7 @@ projects/{name}/
 ├── footage/         # Downloaded clips (segment_00.mp4, ...)
 ├── previews/        # Frame extractions for QA
 ├── output/          # Final video (final.mp4)
-└── upload_info.json # YouTube video ID and URL after upload
+└── upload_info.json # YouTube + Instagram URLs after upload
 ```
 
 **Project Structure (Podcast):**
@@ -159,6 +162,7 @@ projects/{name}/
 - Pexels API (stock images - for long-form)
 - Unsplash API (fallback stock images - optional)
 - YouTube Data API v3 (upload)
+- instagrapi (Instagram Reels upload, `pip install instagrapi`)
 - SerpAPI (fact checking web search, optional)
 - OpenAI API (DALL-E graphics - optional)
 
@@ -187,6 +191,17 @@ projects/{name}/
 7. **Use `--list` to verify downloads** - After bulk download, run `--list` to see the actual YouTube video titles. This catches mismatches instantly without needing to open preview images (e.g., "Scuderia Ferrari SF-26" when you wanted Alpine).
 8. **Ensure all segments have `footage` key** - The video_assembler requires every segment to have a `footage` field in script.json. The footage_downloader adds this automatically for downloaded segments, but pre-copied assets (intro/outro) must have it added manually.
 
+## Daily News Shorts Lessons
+
+1. **Pronunciation vs spelling in script.json** - The `text` field is used for BOTH audio generation AND text overlay. If you respell a name for pronunciation (e.g., "Laurent" → "Lorahn"), the misspelling will appear on screen. Instead, fix pronunciation in the `text` field, generate the audio with the phonetic spelling, then restore the correct spelling before video assembly. The cached MP3s won't regenerate as long as the files exist.
+2. **Composite segments for visual storytelling** - When a segment covers multiple topics (e.g., a person + a concept), build composite footage by concatenating multiple clips with FFmpeg concat demuxer. Use `ffmpeg -af silencedetect` on the audio to find natural pause points for transitions.
+3. **Blurred background aspect ratio fix** - The common `scale=1080:-2` for foreground in 9:16 frame causes stretching on some sources. For 16:9 (1920x1080) sources, explicitly use `scale=1080:608` to maintain correct aspect ratio instead of relying on `-2` auto-calculation.
+4. **Skip jittery interview cuts** - Interview footage from YouTube often has abrupt transitions at clip boundaries. Always preview the first 1-2 seconds of interview clips and add offset to skip any jitter (e.g., start at 525s instead of 524s).
+5. **Use official team/manufacturer videos for technical topics** - For power unit, engine, or technical regulation topics, use official team channels (Mercedes "Road to 2026", Honda PU Launch) or the official F1 channel's explainer videos. These have clean CGI animations and diagrams that work much better than on-track footage for technical concepts.
+6. **Photo sourcing for F1 personnel** - F1 Fandom Wiki has photos of team principals and senior staff. Wikipedia has photos of high-profile figures (e.g., Horner). Behind-the-scenes personnel (HR directors, junior engineers) often have no publicly available photos.
+7. **Fandom Wiki images are WebP** - Despite `.jpg` URLs, Fandom serves WebP format. Convert with FFmpeg after download.
+8. **Instagram challenge_required** - Instagram may trigger security challenges on upload. The user needs to approve login from the Instagram app before retrying.
+
 ## Shorts: 16:9 Video in 9:16 Frame (Blurred Background)
 
 When using horizontal (16:9) footage in vertical (9:16) shorts, use a **blurred background** instead of black bars or stretching:
@@ -195,7 +210,7 @@ When using horizontal (16:9) footage in vertical (9:16) shorts, use a **blurred 
 # FFmpeg filter for blurred background effect (like typical YouTube Shorts)
 ffmpeg -y -ss {start} -i source.mp4 -t {duration} -filter_complex "
 [0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=20:20[bg];
-[0:v]scale=1080:-2[fg];
+[0:v]scale=1080:608[fg];
 [bg][fg]overlay=(W-w)/2:(H-h)/2
 " -c:v h264_videotoolbox -pix_fmt yuv420p -r 30 -an output.mp4
 ```
@@ -251,6 +266,7 @@ python3 src/fact_checker.py --project {name} --strict  # Exit non-zero if unveri
       "id": 1,
       "text": "Voiceover narration text",
       "context": "Editorial note (not rendered)",
+      "visual": "Scene description for storyboard review and footage search guidance",
       "footage_query": "YouTube search terms",
       "footage_start": 55,
       "footage": "segment_00.mp4"
@@ -296,6 +312,7 @@ python3 src/fact_checker.py --project {name} --strict  # Exit non-zero if unveri
 ```
 
 **Key Fields:**
+- `visual`: Scene description for storyboard review and footage search guidance (optional, shorts)
 - `footage_start`: Timestamp (seconds) in source footage to begin extraction
 - `section`: Organize segments (intro, main, conclusion) - used for YouTube chapters
 - `references`: Sources for factual claims - displayed in end credits and description
@@ -424,6 +441,7 @@ Store API keys in `shared/creds/`:
 - `openai` - OpenAI for DALL-E graphics (optional)
 - `google_ai` - Google AI API key for Veo3 video generation (optional)
 - `d-id` - D-ID API key for AI talking head (optional, uses simple animation if not set)
+- `instagram` - Instagram credentials (username on line 1, password on line 2)
 - `youtube_client_secrets.json` - YouTube OAuth credentials
 
 ### Veo3 Setup (Optional - AI Video Generation)
