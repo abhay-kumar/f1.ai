@@ -4,14 +4,15 @@ Preview Extractor - Extracts frames from footage for visual verification
 CRITICAL: Always verify footage matches narrative before assembly!
 Supports concurrent frame extraction for faster processing.
 """
-import os
-import sys
-import json
+
 import argparse
+import json
+import os
 import subprocess
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Tuple, List, Optional
+import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List, Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import get_project_dir
@@ -22,24 +23,49 @@ MAX_CONCURRENT_EXTRACTIONS = 4
 # Thread-safe print
 print_lock = threading.Lock()
 
+
 def get_duration(file_path):
-    cmd = ["ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", file_path]
+    cmd = [
+        "ffprobe",
+        "-v",
+        "quiet",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "csv=p=0",
+        file_path,
+    ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     return float(result.stdout.strip()) if result.stdout.strip() else 0
+
 
 def extract_single_frame(args: Tuple) -> Tuple[int, str, bool]:
     """Extract a single frame (for concurrent execution)"""
     t, video_path, output_path = args
     cmd = [
-        "ffmpeg", "-y", "-ss", str(t), "-i", video_path,
-        "-vframes", "1", "-q:v", "2", output_path
+        "ffmpeg",
+        "-y",
+        "-ss",
+        str(t),
+        "-i",
+        video_path,
+        "-vframes",
+        "1",
+        "-q:v",
+        "2",
+        output_path,
     ]
     subprocess.run(cmd, capture_output=True)
     return t, output_path, os.path.exists(output_path)
 
 
-def extract_frames(video_path: str, output_dir: str, name: str, interval: int = 10,
-                   concurrent: bool = True) -> List[Tuple[int, str]]:
+def extract_frames(
+    video_path: str,
+    output_dir: str,
+    name: str,
+    interval: int = 10,
+    concurrent: bool = True,
+) -> List[Tuple[int, str]]:
     """Extract frames at regular intervals (optionally concurrent)"""
     duration = get_duration(video_path)
     frames = []
@@ -74,15 +100,15 @@ def extract_segment_frames(args: Tuple) -> Tuple[int, str, List[Tuple[int, str]]
     """Extract frames for a single segment (for concurrent execution across segments)"""
     idx, segment, footage_dir, preview_dir, interval = args
 
-    footage_file = segment.get('footage', f'segment_{idx:02d}.mp4')
+    footage_file = segment.get("footage", f"segment_{idx:02d}.mp4")
     full_path = f"{footage_dir}/{footage_file}"
 
     if not os.path.exists(full_path):
-        return idx, segment.get('context', ''), []
+        return idx, segment.get("context", ""), []
 
     name = f"seg{idx:02d}"
     frames = extract_frames(full_path, preview_dir, name, interval, concurrent=False)
-    return idx, segment.get('context', ''), frames
+    return idx, segment.get("context", ""), frames
 
 
 def safe_print(msg: str):
@@ -90,14 +116,23 @@ def safe_print(msg: str):
     with print_lock:
         print(msg, flush=True)
 
+
 def main():
-    parser = argparse.ArgumentParser(description='Extract preview frames from footage')
-    parser.add_argument('--project', required=True, help='Project name')
-    parser.add_argument('--segment', type=int, help='Extract for specific segment only')
-    parser.add_argument('--interval', type=int, default=10, help='Seconds between frames (default: 10)')
-    parser.add_argument('--sequential', action='store_true', help='Disable concurrent processing')
-    parser.add_argument('--workers', type=int, default=MAX_CONCURRENT_EXTRACTIONS,
-                        help=f'Max concurrent workers (default: {MAX_CONCURRENT_EXTRACTIONS})')
+    parser = argparse.ArgumentParser(description="Extract preview frames from footage")
+    parser.add_argument("--project", required=True, help="Project name")
+    parser.add_argument("--segment", type=int, help="Extract for specific segment only")
+    parser.add_argument(
+        "--interval", type=int, default=10, help="Seconds between frames (default: 10)"
+    )
+    parser.add_argument(
+        "--sequential", action="store_true", help="Disable concurrent processing"
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=MAX_CONCURRENT_EXTRACTIONS,
+        help=f"Max concurrent workers (default: {MAX_CONCURRENT_EXTRACTIONS})",
+    )
     args = parser.parse_args()
 
     project_dir = get_project_dir(args.project)
@@ -118,7 +153,9 @@ def main():
 
     print("=" * 60)
     print(f"Preview Extractor - Project: {args.project}")
-    print(f"Concurrency: {'Sequential' if args.sequential else f'{args.workers} workers'}")
+    print(
+        f"Concurrency: {'Sequential' if args.sequential else f'{args.workers} workers'}"
+    )
     print("=" * 60)
     print("\nIMPORTANT: Review these frames to verify footage matches narrative!")
     print("Update 'footage_start' in script.json based on visual inspection.\n")
@@ -133,7 +170,7 @@ def main():
     if args.sequential or len(segments_to_process) == 1:
         # Sequential processing
         for i, segment in segments_to_process:
-            footage_file = segment.get('footage', f'segment_{i:02d}.mp4')
+            footage_file = segment.get("footage", f"segment_{i:02d}.mp4")
             full_path = f"{footage_dir}/{footage_file}"
 
             if not os.path.exists(full_path):
@@ -141,6 +178,8 @@ def main():
                 continue
 
             print(f"\n[{i}] {segment['context']}")
+            if segment.get("visual"):
+                print(f"    Visual: {segment['visual'][:80]}")
             print(f"    Text: {segment['text'][:60]}...")
             print(f"    Current footage_start: {segment.get('footage_start', 0)}s")
 
@@ -153,7 +192,9 @@ def main():
                 print(f"      t={t:3d}s -> {os.path.basename(path)}")
     else:
         # Concurrent processing across segments
-        print(f"Extracting frames from {len(segments_to_process)} segments concurrently...\n")
+        print(
+            f"Extracting frames from {len(segments_to_process)} segments concurrently...\n"
+        )
 
         tasks = [
             (i, segment, footage_dir, preview_dir, args.interval)
@@ -162,7 +203,9 @@ def main():
 
         results = {}
         with ThreadPoolExecutor(max_workers=args.workers) as executor:
-            future_to_idx = {executor.submit(extract_segment_frames, task): task[0] for task in tasks}
+            future_to_idx = {
+                executor.submit(extract_segment_frames, task): task[0] for task in tasks
+            }
 
             for future in as_completed(future_to_idx):
                 idx, context, frames = future.result()
@@ -181,6 +224,8 @@ def main():
             if i in results:
                 context, frames = results[i]
                 print(f"\n[{i}] {context}")
+                if segment.get("visual"):
+                    print(f"    Visual: {segment['visual'][:80]}")
                 print(f"    Text: {segment['text'][:60]}...")
                 print(f"    Current footage_start: {segment.get('footage_start', 0)}s")
                 print(f"    Frames: {len(frames)}")
@@ -195,6 +240,7 @@ def main():
     print("2. Find the timestamp that best matches each segment's narrative")
     print("3. Update 'footage_start' in script.json")
     print("4. Run video assembler")
+
 
 if __name__ == "__main__":
     main()

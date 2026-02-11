@@ -24,6 +24,10 @@ MAX_CONCURRENT_FRAMES = 4  # For preview extraction
 YOUTUBE_CLIENT_SECRETS = f"{SHARED_DIR}/creds/youtube_client_secrets.json"
 YOUTUBE_TOKEN_FILE = f"{SHARED_DIR}/creds/youtube_token.pickle"
 
+# Instagram API Config
+INSTAGRAM_CREDENTIALS_FILE = f"{SHARED_DIR}/creds/instagram"
+INSTAGRAM_SESSION_FILE = f"{SHARED_DIR}/creds/instagram_session.json"
+
 # Video Config
 FRAME_RATE = 30  # CRITICAL: Must be consistent across all segments
 VIDEO_BITRATE = "8M"
