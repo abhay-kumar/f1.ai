@@ -111,15 +111,29 @@ Once user confirms story selection, create the daily news video:
    
    **IMPORTANT**: The outro footage is stored at `shared/assets/daily-news/outro.mp4` and should be copied to the project's footage folder as the last segment BEFORE running the footage downloader. This ensures consistency across all daily news videos and avoids unnecessary downloads.
 
-6. **Footage Verification**:
+6. **Footage Verification** (CRITICAL — do not skip):
    - Run `--list` first to check downloaded video titles match each news story
+   - **Check for duplicate warnings** — the downloader now warns when two segments download the same video. If duplicates are found, replace one with `--segment N --query "alternative search"`
    - Prefer official F1 channel footage over fan channels (fan channels often have screen recordings or news anchors)
-   - For team-specific footage, use subtitle search on broad official videos:
+   - **Compilation/highlights videos need subtitle verification** — a video titled "Day 2 Highlights" may NOT contain all teams. Always verify with subtitle search:
      ```bash
-     yt-dlp --write-auto-sub --sub-lang en --skip-download --sub-format vtt -o /tmp/subs "URL"
-     grep -i "team name" /tmp/subs*.vtt
+     # Find the YouTube video ID
+     yt-dlp 'ytsearch1:VIDEO TITLE' --get-id --no-download
+     # Download subtitles
+     yt-dlp --write-auto-sub --sub-lang en --skip-download --sub-format vtt -o /tmp/subs "https://youtube.com/watch?v=VIDEO_ID"
+     # Search for the team/driver name
+     grep -B3 -i "team name" /tmp/subs*.vtt
      ```
    - **Add 1-2 seconds buffer to subtitle timestamps** - Video visuals often lag behind narration. If subtitles mention "Cadillac" at 240s, the visual may still show the previous team. Use 241-242s instead.
+   - **Color analysis fallback** — when preview JPGs can't be visually inspected, use ImageMagick to identify team livery colors:
+     ```bash
+     # Extract a frame and check dominant colors
+     ffmpeg -y -ss {timestamp} -i footage/segment_XX.mp4 -vframes 1 -q:v 2 /tmp/check.jpg
+     magick /tmp/check.jpg -resize 100x100 -colors 5 -unique-colors -format '%c' histogram:info:-
+     # Red (168,66,49) = Ferrari, Dark blue (42,44,66) = Red Bull,
+     # Silver/teal (77,89,93) = Mercedes, Green (26,46,36) = Aston Martin,
+     # Blue (35,56,81) = Alpine, Papaya (255,135,0) = McLaren
+     ```
    - Delete old previews (`rm previews/segNN_*.jpg`) before re-extracting after footage replacement
    - Update `footage_start` timestamps as needed
    - **Iterate quickly**: Update timestamp in script.json → run video_assembler.py → review → repeat until correct
@@ -159,7 +173,7 @@ Pre-downloaded footage for consistent elements is stored in `shared/assets/daily
 
 These assets should be copied to each new project's footage folder to avoid redundant downloads and ensure visual consistency across episodes.
 
-**IMPORTANT**: After copying intro/outro assets, ensure their segments in script.json have the `footage` field set (e.g., `"footage": "segment_00.mp4"`). The footage_downloader only adds this field for segments it downloads, not for pre-copied files. Missing `footage` fields will cause video_assembler.py to fail with `KeyError: 'footage'`.
+**IMPORTANT**: Set the `footage` field for ALL segments in script.json at creation time, not just intro/outro. Use the convention `"footage": "segment_XX.mp4"` where XX is the zero-padded segment index. The assembler will fallback to this convention if missing, but setting it explicitly avoids issues. Pre-copied assets (intro/outro) especially need this since the footage_downloader only adds it for segments it downloads.
 
 ### Composite Segments (Image + Video)
 

@@ -33,7 +33,8 @@ python3 src/audio_generator.py --project {name} --sequential         # disable c
 
 # Download footage (concurrent by default)
 python3 src/footage_downloader.py --project {name}
-python3 src/footage_downloader.py --project {name} --workers 5  # custom concurrency
+python3 src/footage_downloader.py --project {name} --4k          # 4K resolution (2160p)
+python3 src/footage_downloader.py --project {name} --workers 5   # custom concurrency
 python3 src/footage_downloader.py --project {name} --sequential  # disable concurrency
 
 # Download footage for specific segment (auto-downloads top result)
@@ -44,6 +45,10 @@ python3 src/footage_downloader.py --project {name} --segment 0 --query "F1 race 
 
 # Check footage status (shows downloaded video titles)
 python3 src/footage_downloader.py --project {name} --list
+
+# Download footage sequentially in isolated subprocesses (fallback when Python downloader hangs)
+bash src/download_footage.sh {name}                    # All segments with footage_query
+bash src/download_footage.sh {name} "0 1 3 6 8"       # Specific segments only
 
 # Extract preview frames (concurrent by default)
 python3 src/preview_extractor.py --project {name}
@@ -67,20 +72,26 @@ python3 src/instagram_uploader.py --project {name}               # Upload to Ins
 ### Long-Form Commands (16:9 Horizontal, 4K/HD)
 
 ```bash
-# RECOMMENDED: Advanced visual assembler with intelligent routing
-python3 src/image_video_assembler.py --project {name}                     # HD default
-python3 src/image_video_assembler.py --project {name} --resolution 4k     # 4K output
-python3 src/image_video_assembler.py --project {name} --no-talking-head   # Disable talking head
+# RECOMMENDED: Advanced visual assembler with YouTube-first approach
+python3 src/image_video_assembler.py --project {name}                     # 4K default
+python3 src/image_video_assembler.py --project {name} --resolution hd     # 1080p output
 python3 src/image_video_assembler.py --project {name} --veo3              # Enable Veo3 AI video
 python3 src/image_video_assembler.py --project {name} --analyze           # Preview visual routing
 python3 src/image_video_assembler.py --project {name} --no-music          # Skip background music
+python3 src/image_video_assembler.py --project {name} --no-sfx            # Skip transition SFX
+python3 src/image_video_assembler.py --project {name} --no-intro          # Skip animated logo intro
 
 # Visual types (automatically routed based on script content):
-# - f1_image: High-quality F1 photos from Pexels/Unsplash with Ken Burns effects
-# - youtube_clip: Official F1 footage for action sequences
-# - talking_head: AI presenter for concept explanations
+# - youtube_clip: YouTube footage as primary visual source (YouTube-first approach)
+# - f1_image: High-quality F1 photos from Pexels/Unsplash with Ken Burns effects (fallback)
 # - quote_overlay: Speaker image + quote text
 # - veo3_video: AI-generated video for abstract concepts (requires --veo3 flag)
+#
+# Post-processing features (automatic):
+# - Color grading: B&W, vintage, cinematic, warm, cool (auto-detected from script context)
+# - Transition SFX: Swoosh sounds between segments
+# - Animated intro: Logo animation with engine rev SFX
+# - Context-aware music: Dynamic volume based on segment mood
 
 # Alternative: Footage-based assembly (downloads YouTube videos)
 python3 src/video_assembler_longform.py --project {name}                    # 4K default
@@ -101,10 +112,11 @@ python3 src/gemini_podcast_audio_generator.py --project {name} --chunked --voice
 python3 src/gemini_podcast_audio_generator.py --project {name} --chunked --model pro   # Pro model (paid)
 python3 src/gemini_podcast_audio_generator.py --project {name} --preview  # Preview transcript
 
-# Add intro/outro music
+# Add intro/outro music (always use --output to write directly to final.mp3)
 python3 src/podcast_music_mixer.py --project {name} \
   --music shared/music/podcast_default.mp3 \
-  --documentary
+  --documentary \
+  --output projects/{name}/output/final.mp3
 
 # Preview music placement without processing
 python3 src/podcast_music_mixer.py --project {name} --dry-run
@@ -123,10 +135,13 @@ script.json → fact_check → audio/*.mp3 → footage/*.mp4 → previews/*.jpg 
 - `audio_generator.py` - Gemini TTS (default, free) / ElevenLabs TTS with caching and **concurrent processing**
 - `gemini_podcast_audio_generator.py` - **Podcast**: Single-request TTS for voice consistency
 - `podcast_music_mixer.py` - **Podcast**: Intro/outro music mixing with FFmpeg
-- `footage_downloader.py` - yt-dlp YouTube search/download with **concurrent downloads** (shorts only)
-- `stock_image_fetcher.py` - Pexels/Unsplash API for stock photos (long-form)
-- `image_video_assembler.py` - **Long-form**: Intelligent visual routing with images, talking head, YouTube clips, quotes, and Veo3
+- `footage_downloader.py` - yt-dlp YouTube search/download with **concurrent downloads**, 4K support
+- `stock_image_fetcher.py` - Pexels/Unsplash API for stock photos (long-form fallback)
+- `image_video_assembler.py` - **Long-form**: YouTube-first visual routing with color grading, transition SFX, animated intro, context-aware music
+- `color_grader.py` - FFmpeg color grading presets (B&W, vintage, cinematic, warm, cool)
+- `intro_generator.py` - Animated logo intro with engine rev + swoosh SFX
 - `veo3_generator.py` - Google Veo3 AI video generation for abstract concepts
+- `download_footage.sh` - Sequential footage downloader in isolated subprocesses (fallback for hangs/memory leaks)
 - `video_assembler.py` - Shorts: 9:16 vertical FFmpeg composition with GPU acceleration
 - `video_assembler_longform.py` - Long-form: 16:9 horizontal with YouTube footage (legacy)
 - `youtube_uploader.py` - Shorts: OAuth upload with #Shorts hashtag
@@ -189,7 +204,16 @@ projects/{name}/
 5. **Delete previews before re-extracting** - Preview images are cached. After replacing footage, delete old previews (`rm previews/segNN_*.jpg`) before running preview_extractor, otherwise stale images will be shown.
 6. **Delete footage before re-downloading** - `yt-dlp` may skip download if a file already exists at the output path. Always `rm` the old file first when re-downloading a segment.
 7. **Use `--list` to verify downloads** - After bulk download, run `--list` to see the actual YouTube video titles. This catches mismatches instantly without needing to open preview images (e.g., "Scuderia Ferrari SF-26" when you wanted Alpine).
-8. **Ensure all segments have `footage` key** - The video_assembler requires every segment to have a `footage` field in script.json. The footage_downloader adds this automatically for downloaded segments, but pre-copied assets (intro/outro) must have it added manually.
+8. **Ensure all segments have `footage` key** - Set the `footage` field for ALL segments in script.json at creation time (e.g., `"footage": "segment_00.mp4"`). The assembler will fallback to the convention `segment_{idx:02d}.mp4` if missing, but setting it explicitly is best practice. The footage_downloader now also sets this field for cached segments.
+9. **Compilation videos often serve wrong content for multiple segments** - The bulk downloader may download the same YouTube compilation (e.g., "Day 2 Highlights") for two different segments. The downloader now warns about duplicates. When this happens, one segment will have correct content at the right timestamp, but the other may have NO relevant content at all. Always verify with subtitle search, especially when `--list` shows the same title for multiple segments.
+10. **Use ImageMagick color analysis to verify team footage programmatically** - When preview JPGs can't be visually inspected, extract a frame and analyze dominant colors:
+    ```bash
+    ffmpeg -y -ss {timestamp} -i footage/segment_XX.mp4 -vframes 1 -q:v 2 /tmp/check.jpg
+    magick /tmp/check.jpg -resize 100x100 -colors 5 -unique-colors -format '%c' histogram:info:-
+    # Red (168,66,49) = Ferrari, Dark blue (42,44,66) = Red Bull,
+    # Silver/teal (77,89,93) = Mercedes, Green (26,46,36) = Aston Martin,
+    # Blue (35,56,81) = Alpine, Papaya (255,135,0) = McLaren
+    ```
 
 ## Daily News Shorts Lessons
 
@@ -312,11 +336,14 @@ python3 src/fact_checker.py --project {name} --strict  # Exit non-zero if unveri
 ```
 
 **Key Fields:**
-- `visual`: Scene description for storyboard review and footage search guidance (optional, shorts)
+- `visual`: Scene description for storyboard review and footage search guidance (optional)
 - `footage_start`: Timestamp (seconds) in source footage to begin extraction
 - `section`: Organize segments (intro, main, conclusion) - used for YouTube chapters
 - `references`: Sources for factual claims - displayed in end credits and description
 - `references_summary`: Consolidated source list for the entire video
+- `color_grade`: Override auto-detected grade (`bw`, `vintage`, `cinematic`, `warm`, `cool`, `none`)
+- `music_mood`: Override music volume (`uplifting`, `atmospheric`, `default`)
+- `transition_sfx`: Override transition sound (`swoosh`, `fade`)
 
 ### Podcast Format
 
@@ -388,12 +415,31 @@ python3 src/fact_checker.py --project {name} --strict  # Exit non-zero if unveri
 python3 src/gemini_podcast_audio_generator.py --project {name} --chunked
 
 # Then add music
-python3 src/podcast_music_mixer.py --project {name} --music shared/music/podcast_default.mp3 --documentary
+python3 src/podcast_music_mixer.py --project {name} --music shared/music/podcast_default.mp3 --documentary --output projects/{name}/output/final.mp3
 ```
 
 **Why it works**: Each TTS request stays short enough (~60-90 seconds) to maintain consistent voice quality throughout. SSML is preserved within each chunk.
 
 **Avoid**: Single-request mode (`--legacy` or default) for podcasts longer than ~5 minutes.
+
+### Gemini TTS Ad-Lib Fix
+
+**Problem**: Gemini TTS sometimes generates extra speech beyond the script text in the last chunk (e.g., an improvised sign-off or repeated content). This results in unwanted voiceover during the outro music.
+
+**Detection**: After generating audio, check the last chunk for suspicious trailing content:
+```bash
+# Look for a gap followed by extra speech at the end of the last chunk
+ffmpeg -i projects/{name}/audio/chunk_NNN.mp3 -af "silencedetect=noise=-28dB:d=0.3" -f null - 2>&1 | grep silence | tail -5
+```
+If there's a silence gap in the last ~15s followed by more speech, Gemini ad-libbed.
+
+**Fix**: Trim the last chunk at the silence gap before the ad-lib:
+```bash
+ffmpeg -y -i projects/{name}/audio/chunk_NNN.mp3 -t {cut_point} -c:a libmp3lame -b:a 256k projects/{name}/audio/chunk_NNN.mp3
+```
+Then re-run the audio generator (it will use cached chunks) and the music mixer.
+
+**Alternative**: Delete the last chunk and re-run the generator. Gemini doesn't always ad-lib — regenerating often produces a clean take.
 
 ### Local TTS Alternative (Qwen3)
 
@@ -440,7 +486,6 @@ Store API keys in `shared/creds/`:
 - `unsplash` - Unsplash fallback (free at https://unsplash.com/developers)
 - `openai` - OpenAI for DALL-E graphics (optional)
 - `google_ai` - Google AI API key for Veo3 video generation (optional)
-- `d-id` - D-ID API key for AI talking head (optional, uses simple animation if not set)
 - `instagram` - Instagram credentials (username on line 1, password on line 2)
 - `youtube_client_secrets.json` - YouTube OAuth credentials
 

@@ -23,7 +23,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import get_project_dir
 
 # Concurrency settings
-MAX_CONCURRENT_DOWNLOADS = 3  # Be respectful to YouTube
+MAX_CONCURRENT_DOWNLOADS = 4  # Parallel download workers
+
+# Format strings for yt-dlp
+FORMAT_HD = "137+140/bestvideo[height<=1080]+bestaudio/best[height<=1080]"
+FORMAT_4K = "bestvideo[height<=2160]+bestaudio/best[height<=2160]"
 
 # Thread-safe print
 print_lock = threading.Lock()
@@ -211,11 +215,12 @@ def search_youtube(query, max_results=3):
     cmd = [
         "yt-dlp",
         "--no-warnings",
+        "--no-check-formats",
         f"ytsearch{max_results}:{query}",
         "--get-id",
         "--get-title",
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
     lines = result.stdout.strip().split("\n")
     videos = []
     for i in range(0, len(lines), 2):
@@ -237,13 +242,14 @@ def search_youtube_enhanced(
     cmd = [
         "yt-dlp",
         "--no-warnings",
+        "--no-check-formats",
         f"ytsearch{max_results}:{enhanced}",
         "--print",
         "%(title)s|||%(id)s|||%(channel)s|||%(duration)s",
         "--no-download",
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
 
     videos = []
     for line in result.stdout.strip().split("\n"):
@@ -280,28 +286,33 @@ def search_youtube_enhanced(
     return videos
 
 
-def download_video(video_id: str, output_path: str) -> Tuple[bool, Optional[str]]:
-    """Download a YouTube video"""
+def download_video(
+    video_id: str, output_path: str, use_4k: bool = False
+) -> Tuple[bool, Optional[str]]:
+    """Download a YouTube video with optimized speed settings."""
     url = f"https://www.youtube.com/watch?v={video_id}"
+    fmt = FORMAT_4K if use_4k else FORMAT_HD
     cmd = [
         "yt-dlp",
         "--no-warnings",
+        "--concurrent-fragments",
+        "4",
         "-f",
-        "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]",
+        fmt,
         "--merge-output-format",
         "mp4",
         "-o",
         output_path,
         url,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
     if os.path.exists(output_path):
         return True, None
     return False, result.stderr[:200] if result.stderr else "Unknown error"
 
 
 def download_segment(args: Tuple) -> Tuple[int, bool, Optional[str], Optional[str]]:
-    """Download footage for a single segment (for concurrent execution) - basic version"""
+    """Download footage for a single segment (for concurrent execution) with enhanced search"""
     idx, segment, footage_dir, footage_file = args
 
     full_path = f"{footage_dir}/{footage_file}"
@@ -310,14 +321,23 @@ def download_segment(args: Tuple) -> Tuple[int, bool, Optional[str], Optional[st
         return idx, True, "cached", None
 
     query = segment.get("footage_query", segment["text"][:50])
-    videos = search_youtube(query, max_results=1)
+    visual = segment.get("visual", "")
+    videos = search_youtube_enhanced(query, max_results=3, visual=visual)
+
+    if not videos:
+        # Fallback to basic search if enhanced returns nothing
+        videos = search_youtube(query, max_results=1)
 
     if not videos:
         return idx, False, None, "No search results"
 
-    success, error = download_video(videos[0]["id"], full_path)
+    top = videos[0]
+    video_id = top["id"]
+    title = top.get("title", "")[:50]
+
+    success, error = download_video(video_id, full_path)
     if success:
-        return idx, True, videos[0]["title"][:50], None
+        return idx, True, title, None
     return idx, False, None, error
 
 
@@ -486,6 +506,12 @@ def main():
         default=MAX_CONCURRENT_DOWNLOADS,
         help=f"Max concurrent downloads (default: {MAX_CONCURRENT_DOWNLOADS})",
     )
+    parser.add_argument(
+        "--4k",
+        action="store_true",
+        dest="use_4k",
+        help="Download 4K resolution (up to 2160p) instead of HD (1080p)",
+    )
     args = parser.parse_args()
 
     project_dir = get_project_dir(args.project)
@@ -528,8 +554,8 @@ def main():
         if args.url:
             # Direct URL download
             video_id = args.url.split("v=")[-1].split("&")[0]
-            print(f"Downloading from URL: {args.url}")
-            success, error = download_video(video_id, output_file)
+            print(f"Downloading from URL: {args.url} ({'4K' if args.use_4k else 'HD'})")
+            success, error = download_video(video_id, output_file, use_4k=args.use_4k)
             if success:
                 print(f"Saved to: {output_file}")
                 # Fetch and store video title
@@ -587,10 +613,14 @@ def main():
             elif videos:
                 # Auto-download top result
                 top = videos[0]
-                print(f"\nDownloading top result: {top['title'][:60]}...")
+                print(
+                    f"\nDownloading top result ({'4K' if args.use_4k else 'HD'}): {top['title'][:60]}..."
+                )
                 if os.path.exists(output_file):
                     os.remove(output_file)
-                success, error = download_video(top["id"], output_file)
+                success, error = download_video(
+                    top["id"], output_file, use_4k=args.use_4k
+                )
                 if success:
                     print(f"Saved to: {output_file}")
                     segment["footage"] = f"segment_{args.segment:02d}.mp4"
@@ -609,6 +639,7 @@ def main():
         # Download all missing footage
         print("=" * 60)
         print(f"Downloading All Footage - Project: {args.project}")
+        print(f"Resolution: {'4K (2160p)' if args.use_4k else 'HD (1080p)'}")
         print(
             f"Concurrency: {'Sequential' if args.sequential else f'{args.workers} workers'}"
         )
@@ -631,6 +662,7 @@ def main():
                 print(f"[{idx}] Processing: {seg['context']}...", end=" ", flush=True)
                 idx, success, title, error = download_segment(task)
                 if title == "cached":
+                    segments[idx]["footage"] = f"segment_{idx:02d}.mp4"
                     print("Cached")
                     cached += 1
                 elif success:
@@ -655,6 +687,7 @@ def main():
                     seg = segments[idx]
 
                     if title == "cached":
+                        segments[idx]["footage"] = f"segment_{idx:02d}.mp4"
                         safe_print(f"[{idx}] Cached: {seg['context']}")
                         cached += 1
                     elif success:
@@ -665,6 +698,22 @@ def main():
                     else:
                         safe_print(f"[{idx}] Failed: {seg['context']} - {error}")
                         failed += 1
+
+        # Check for duplicate video downloads
+        title_to_segments = {}
+        for i, seg in enumerate(segments):
+            title = seg.get("footage_title", "")
+            if title and title != "cached":
+                title_to_segments.setdefault(title, []).append(i)
+        duplicates = {t: idxs for t, idxs in title_to_segments.items() if len(idxs) > 1}
+        if duplicates:
+            print(f"\n{'!' * 60}")
+            print("WARNING: Duplicate videos detected!")
+            for title, idxs in duplicates.items():
+                seg_list = ", ".join(f"[{i}]" for i in idxs)
+                print(f"  Segments {seg_list} share: {title}")
+            print("Consider using --segment N --query to find different footage")
+            print(f"{'!' * 60}")
 
         # Save updated script
         with open(script_file, "w") as f:

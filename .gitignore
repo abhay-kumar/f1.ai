@@ -21,6 +21,7 @@ creds.*
 thoughts
 
 shared/reddit_ideas.json
+shared/podcast_episodes.json
 
 # Large asset files
 shared/assets/**/*.mp4
