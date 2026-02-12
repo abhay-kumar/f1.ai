@@ -165,6 +165,13 @@ projects/{project-name}/
    - Create inside jokes that return throughout the episode
    - Make the listener feel like they're in on something
 
+   **QUOTING PEOPLE NATURALLY**:
+   - NEVER write "quote ... end quote" — it sounds robotic in spoken audio
+   - Instead, weave quotes naturally: "He called it spectacular", "In his words, the car just felt alive"
+   - Use lead-ins like "He goes...", "She put it perfectly...", "His response was classic..."
+   - For longer quotes, just shift into the person's voice naturally with a setup: "Newey said — and I love this — I never look at my designs as aggressive."
+   - The listener should feel like they're hearing the quote, not being told one exists
+
    **CONTENT DEPTH**:
    - Engineering depth: Explain technical concepts accessibly but accurately
    - Historical context: Connect current events to F1 history
@@ -240,10 +247,11 @@ projects/{project-name}/
    # Step 1: Generate podcast audio (CHUNKED MODE - prevents voice degradation)
    python3 src/gemini_podcast_audio_generator.py --project {name} --chunked
 
-   # Step 2: Add intro/outro music
+   # Step 2: Add intro/outro music (always use --output to avoid creating a redundant file)
    python3 src/podcast_music_mixer.py --project {name} \
      --music shared/music/podcast_default.mp3 \
-     --documentary
+     --documentary \
+     --output projects/{name}/output/final.mp3
    ```
 
    **Why Chunked Mode?**

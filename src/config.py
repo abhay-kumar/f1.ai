@@ -52,6 +52,8 @@ BACKGROUND_MUSIC = f"{SHARED_DIR}/music/background.mp3"
 BACKGROUND_MUSIC_LONGFORM = f"{SHARED_DIR}/music/background_longform.mp3"  # Optional separate music for long-form
 MUSIC_VOLUME = 0.04  # Lowered from 0.08 to ensure voiceover dominates
 MUSIC_VOLUME_LONGFORM = 0.05  # Very quiet for long-form content (5%)
+MUSIC_VOLUME_UPLIFTING = 0.08  # Louder for feel-good/victory segments
+MUSIC_VOLUME_ATMOSPHERIC = 0.04  # Softer for history/technical segments
 
 # Outro Audio (reusable for all long-form videos)
 OUTRO_AUDIO_LONGFORM = f"{SHARED_DIR}/audio/outro_longform.mp3"  # ~19s CTA voiceover

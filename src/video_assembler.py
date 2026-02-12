@@ -187,9 +187,10 @@ def create_segment_video(
     encoder_flags=None,
 ):
     """Create video segment with blur-pad effect and text captions"""
-    footage_file = f"{footage_dir}/{segment['footage']}"
+    footage_name = segment.get("footage", f"segment_{segment_idx:02d}.mp4")
+    footage_file = f"{footage_dir}/{footage_name}"
     if not os.path.exists(footage_file):
-        return False, f"Missing footage: {segment['footage']}"
+        return False, f"Missing footage: {footage_name}"
 
     audio_duration = get_duration(audio_path)
     start_time = segment.get("footage_start", 0)

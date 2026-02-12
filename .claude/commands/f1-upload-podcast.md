@@ -14,12 +14,16 @@ The project name is the folder name under `projects/` containing the podcast to 
    - Check `projects/{project}/output/final.mp3` exists
    - Check `projects/{project}/script.json` exists
 
-2. **Generate cover art** if it doesn't exist:
+2. **Get episode number** from the tracker at `shared/podcast_episodes.json`:
+   - Read `next_episode` for the episode number
+   - After upload content is generated, update the tracker: increment `next_episode` and append the new episode to the `episodes` array
+
+3. **Generate cover art** if it doesn't exist:
    ```bash
    python3 src/podcast_cover_generator.py --project {project} --episode {episode_num} --title "{short_title}"
    ```
 
-3. **Read the script.json** and extract:
+4. **Read the script.json** and extract:
    - Title
    - Host information
    - All segments with text, context, and emotion
@@ -34,7 +38,7 @@ The project name is the folder name under `projects/` containing the podcast to 
 
 **Season Number:** `1`
 
-**Episode Number:** `{extract from title or ask user}`
+**Episode Number:** `{from shared/podcast_episodes.json next_episode}`
 
 **Episode Type:** `Full`
 

@@ -449,8 +449,8 @@ def create_intro_outro_only_mix(
     else:
         filter_parts.append(f"[1:a]atrim=0:{target_duration:.1f}[music_long]")
 
-    # Split music for intro and outro
-    filter_parts.append("[music_long]asplit=2[m_intro][m_outro]")
+    # Split music into 3 streams: intro, outro quiet, outro swell
+    filter_parts.append("[music_long]asplit=3[m_intro][m_outro][m_swell]")
 
     # INTRO: First 12s at high volume, fade out over 4s
     filter_parts.append(
@@ -482,7 +482,7 @@ def create_intro_outro_only_mix(
     swell_duration = extension + 2
 
     filter_parts.append(
-        f"[music_long]atrim={outro_offset + 8}:{outro_offset + 8 + swell_duration},"
+        f"[m_swell]atrim={outro_offset + 8}:{outro_offset + 8 + swell_duration},"
         f"asetpts=PTS-STARTPTS,"
         f"volume={outro_vol},"
         f"afade=t=in:st=0:d=4,"  # 4s fade in (gradual swell)
@@ -491,9 +491,10 @@ def create_intro_outro_only_mix(
     )
 
     # Mix: voice + intro + outro_quiet + outro_swell
+    # normalize=0 prevents amix from reducing voice volume when music layers start
     filter_parts.append(
         "[voice][intro][outro_quiet][outro_swell]amix=inputs=4:duration=first:"
-        "weights=1 0.8 0.6 0.7[mixed]"
+        "weights=1 0.8 0.6 0.7:normalize=0[mixed]"
     )
 
     # Normalize to -16 LUFS
