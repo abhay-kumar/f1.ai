@@ -16,11 +16,19 @@ import os
 import subprocess
 import sys
 import threading
+import time
+import urllib.parse
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import get_project_dir
+from src.shot_assembler import (
+    get_shot_source_ext,
+    normalize_segment,
+    shot_footage_filename,
+)
 
 # Concurrency settings
 MAX_CONCURRENT_DOWNLOADS = 4  # Parallel download workers
@@ -249,7 +257,11 @@ def search_youtube_enhanced(
         "--no-download",
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
+    except subprocess.TimeoutExpired:
+        safe_print(f"  [Search] yt-dlp search timed out for: {enhanced[:50]}")
+        return []
 
     videos = []
     for line in result.stdout.strip().split("\n"):
@@ -305,7 +317,19 @@ def download_video(
         output_path,
         url,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    except subprocess.TimeoutExpired:
+        # Clean up partial files left by yt-dlp
+        import glob
+
+        for f in glob.glob(f"{output_path}*"):
+            if f != output_path:
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
+        return False, "Download timed out after 180s"
     if os.path.exists(output_path):
         return True, None
     return False, result.stderr[:200] if result.stderr else "Unknown error"
@@ -477,16 +501,501 @@ def download_segment_smart(
     return idx, False, None, "All candidates failed", None
 
 
+def download_image(query: str, output_path: str) -> Tuple[bool, Optional[str]]:
+    """Download a stock image from Pexels for an image shot.
+
+    Searches Pexels for the query and downloads the top result.
+    Falls back to a simple placeholder if Pexels API is unavailable.
+    """
+    # Try to load Pexels API key
+    creds_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "shared",
+        "creds",
+        "pexels",
+    )
+    api_key = None
+    if os.path.exists(creds_path):
+        with open(creds_path) as f:
+            api_key = f.read().strip()
+
+    if not api_key:
+        api_key = os.environ.get("PEXELS_API_KEY")
+
+    if not api_key:
+        return False, "No Pexels API key (shared/creds/pexels)"
+
+    try:
+        # Add F1 context to query for better results
+        search_query = (
+            query
+            if "f1" in query.lower() or "formula" in query.lower()
+            else f"{query} Formula 1"
+        )
+        search_url = f"https://api.pexels.com/v1/search?query={urllib.parse.quote(search_query)}&per_page=3&orientation=landscape"
+        req = urllib.request.Request(
+            search_url,
+            headers={
+                "Authorization": api_key,
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+            },
+        )
+
+        with urllib.request.urlopen(req, timeout=15) as response:
+            data = json.loads(response.read().decode())
+
+        photos = data.get("photos", [])
+        if not photos:
+            return False, f"No images found for: {query}"
+
+        # Download the first image
+        image_url = photos[0]["src"]["large2x"]
+        req = urllib.request.Request(
+            image_url,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        with urllib.request.urlopen(req, timeout=30) as response:
+            with open(output_path, "wb") as f:
+                f.write(response.read())
+
+        return True, None
+    except Exception as e:
+        return False, str(e)[:100]
+
+
+def get_download_tasks(segments: list, footage_dir: str) -> list:
+    """Build download tasks from segments, respecting shot lists.
+
+    For segments with shots arrays, creates one task per downloadable shot.
+    For legacy segments (no shots), creates one task per segment.
+
+    Returns list of task dicts with keys:
+        seg_idx, shot_idx, query, visual, footage_file, footage_start,
+        source_type, image_query
+    """
+    tasks = []
+    for seg_idx, seg in enumerate(segments):
+        seg = normalize_segment(seg)
+        shots = seg.get("shots", [])
+
+        if len(shots) > 1:
+            # Multi-shot segment: one task per shot
+            for shot_idx, shot in enumerate(shots):
+                source_type = shot.get("source_type", "youtube_clip")
+                if source_type not in ("youtube_clip", "image"):
+                    continue  # Skip non-downloadable shots (quote_overlay, veo3, etc.)
+
+                ext = get_shot_source_ext(source_type)
+                footage_file = shot.get(
+                    "footage", shot_footage_filename(seg_idx, shot_idx, ext)
+                )
+
+                tasks.append(
+                    {
+                        "seg_idx": seg_idx,
+                        "shot_idx": shot_idx,
+                        "query": shot.get("footage_query", ""),
+                        "image_query": shot.get("image_query", ""),
+                        "visual": shot.get("label", ""),
+                        "footage_file": footage_file,
+                        "footage_start": shot.get("footage_start", 0),
+                        "source_type": source_type,
+                    }
+                )
+        else:
+            # Single-shot / legacy segment
+            footage_file = seg.get("footage", f"segment_{seg_idx:02d}.mp4")
+            tasks.append(
+                {
+                    "seg_idx": seg_idx,
+                    "shot_idx": None,
+                    "query": seg.get("footage_query", seg.get("text", "")[:50]),
+                    "image_query": "",
+                    "visual": seg.get("visual", ""),
+                    "footage_file": footage_file,
+                    "footage_start": seg.get("footage_start", 0),
+                    "source_type": "youtube_clip",
+                }
+            )
+
+    return tasks
+
+
+def download_task(
+    args: Tuple,
+) -> Tuple[int, Optional[int], bool, Optional[str], Optional[str]]:
+    """Download footage or image for a single task (for concurrent execution).
+
+    The task dict may contain:
+        use_google: bool - Use Google search for better results
+        validate: bool - Validate with Gemini vision after download
+        max_candidates: int - Max candidates to try (default 5)
+
+    Returns: (seg_idx, shot_idx, success, title_or_status, error)
+    """
+    task, footage_dir = args
+
+    full_path = os.path.join(footage_dir, task["footage_file"])
+    use_google = task.get("use_google", False)
+    validate = task.get("validate", False)
+    max_candidates = task.get("max_candidates", 5)
+
+    if os.path.exists(full_path):
+        return task["seg_idx"], task["shot_idx"], True, "cached", None
+
+    if task["source_type"] == "image":
+        return _download_image_task(
+            task, full_path, use_google, validate, max_candidates
+        )
+    else:
+        return _download_video_task(
+            task, full_path, footage_dir, use_google, validate, max_candidates
+        )
+
+
+def _download_image_task(
+    task: Dict, full_path: str, use_google: bool, validate: bool, max_candidates: int
+) -> Tuple[int, Optional[int], bool, Optional[str], Optional[str]]:
+    """Download an image with optional Google search and Gemini validation."""
+    query = task["image_query"] or task["query"]
+    if not query:
+        return task["seg_idx"], task["shot_idx"], False, None, "No image query"
+
+    label = task.get("visual", query[:40])
+
+    # Build candidate list
+    candidates = []
+
+    if use_google:
+        try:
+            from src.google_image_search import search_google_images
+
+            results = search_google_images(query, max_results=max_candidates)
+            for r in results:
+                candidates.append({"url": r["url"], "source": "google"})
+        except Exception as e:
+            safe_print(f"  [Google Images] Error: {e}")
+
+    # Always add Pexels as fallback (via existing download_image)
+    if not candidates:
+        # No Google results, use direct Pexels download
+        success, error = download_image(query, full_path)
+        if success:
+            if validate:
+                is_match, conf, reason = _validate_file(full_path, label, query)
+                if not is_match:
+                    safe_print(f"  [Validate] MISMATCH ({conf:.1f}): {reason[:50]}")
+                    # Keep it anyway as best effort since no other candidates
+            return (
+                task["seg_idx"],
+                task["shot_idx"],
+                success,
+                f"image: {query[:40]}",
+                error,
+            )
+        return task["seg_idx"], task["shot_idx"], False, None, error
+
+    # Try each Google Images candidate
+    best_path = None
+    best_conf = 0.0
+    for i, candidate in enumerate(candidates[:max_candidates]):
+        temp_path = full_path + f".candidate_{i}"
+        try:
+            from src.google_image_search import download_image_url
+
+            success, err = download_image_url(candidate["url"], temp_path)
+            if not success:
+                continue
+
+            if os.path.getsize(temp_path) < 5000:
+                os.remove(temp_path)
+                continue
+
+            if validate:
+                is_match, conf, reason = _validate_file(temp_path, label, query)
+                if is_match:
+                    os.rename(temp_path, full_path)
+                    return (
+                        task["seg_idx"],
+                        task["shot_idx"],
+                        True,
+                        f"image[google,validated]: {query[:30]}",
+                        None,
+                    )
+                else:
+                    safe_print(
+                        f"  [Validate] Candidate {i} MISMATCH ({conf:.1f}): {reason[:40]}"
+                    )
+                    if conf > best_conf:
+                        if best_path and os.path.exists(best_path):
+                            os.remove(best_path)
+                        best_path = temp_path
+                        best_conf = conf
+                    else:
+                        os.remove(temp_path)
+            else:
+                # No validation, accept first successful download
+                os.rename(temp_path, full_path)
+                return (
+                    task["seg_idx"],
+                    task["shot_idx"],
+                    True,
+                    f"image[google]: {query[:30]}",
+                    None,
+                )
+
+        except Exception:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+    # All candidates failed validation — use best effort
+    if best_path and os.path.exists(best_path):
+        os.rename(best_path, full_path)
+        return (
+            task["seg_idx"],
+            task["shot_idx"],
+            True,
+            f"image[google,unverified]: {query[:25]}",
+            None,
+        )
+
+    # Fall back to Pexels
+    success, error = download_image(query, full_path)
+    if success:
+        return (
+            task["seg_idx"],
+            task["shot_idx"],
+            True,
+            f"image[pexels]: {query[:30]}",
+            None,
+        )
+    return (
+        task["seg_idx"],
+        task["shot_idx"],
+        False,
+        None,
+        error or "All candidates failed",
+    )
+
+
+def _download_video_task(
+    task: Dict,
+    full_path: str,
+    footage_dir: str,
+    use_google: bool,
+    validate: bool,
+    max_candidates: int,
+) -> Tuple[int, Optional[int], bool, Optional[str], Optional[str]]:
+    """Download a YouTube video with optional Google search and Gemini validation."""
+    query = task["query"] or task["visual"]
+    if not query:
+        return task["seg_idx"], task["shot_idx"], False, None, "No footage query"
+
+    label = task.get("visual", query[:40])
+    visual = task["visual"]
+    footage_start = task.get("footage_start", 5)
+
+    # Build candidate list
+    candidates = []
+
+    if use_google:
+        try:
+            from src.google_image_search import search_google_for_youtube
+
+            results = search_google_for_youtube(query, max_results=max_candidates)
+            for r in results:
+                candidates.append(
+                    {
+                        "id": r["video_id"],
+                        "title": r["title"],
+                        "source": "google",
+                    }
+                )
+        except Exception:
+            pass
+
+    # Add yt-dlp results (primary or fallback)
+    yt_videos = search_youtube_enhanced(
+        query, max_results=max_candidates, visual=visual
+    )
+    if not yt_videos:
+        yt_videos = search_youtube(query, max_results=3)
+    for v in yt_videos:
+        if v["id"] not in [c["id"] for c in candidates]:
+            candidates.append(
+                {
+                    "id": v["id"],
+                    "title": v.get("title", ""),
+                    "source": "ytsearch",
+                }
+            )
+
+    if not candidates:
+        return task["seg_idx"], task["shot_idx"], False, None, "No search results"
+
+    if not validate:
+        # Without validation, download first candidate (existing behavior)
+        top = candidates[0]
+        success, error = download_video(top["id"], full_path)
+        if success:
+            return (
+                task["seg_idx"],
+                task["shot_idx"],
+                True,
+                top.get("title", "")[:50],
+                None,
+            )
+        return task["seg_idx"], task["shot_idx"], False, None, error
+
+    # With validation: validate thumbnails first (fast), then download winner
+    best_candidate = None
+    best_conf = 0.0
+
+    for i, candidate in enumerate(candidates[:max_candidates]):
+        source = candidate.get("source", "")
+
+        # Validate via YouTube thumbnail (instant — no video download needed)
+        is_match, conf, reason = _validate_thumbnail(candidate["id"], label, query)
+
+        if is_match:
+            safe_print(
+                f"  [Thumbnail] Candidate {i} ({source}) MATCH ({conf:.1f}): {reason[:40]}"
+            )
+            # Thumbnail matched — download the full video
+            success, error = download_video(candidate["id"], full_path)
+            if success:
+                title = candidate.get("title", "")[:40]
+                return (
+                    task["seg_idx"],
+                    task["shot_idx"],
+                    True,
+                    f"{title}[{source},validated]",
+                    None,
+                )
+            # Full download failed — try next candidate
+            continue
+        else:
+            safe_print(
+                f"  [Thumbnail] Candidate {i} ({source}) MISMATCH ({conf:.1f}): {reason[:40]}"
+            )
+            if conf > best_conf:
+                best_candidate = candidate
+                best_conf = conf
+
+    # All candidates failed thumbnail validation — download best effort
+    if best_candidate:
+        success, error = download_video(best_candidate["id"], full_path)
+        if success:
+            best_title = best_candidate.get("title", "")[:40]
+            return (
+                task["seg_idx"],
+                task["shot_idx"],
+                True,
+                f"{best_title}[unverified]",
+                None,
+            )
+
+    return (
+        task["seg_idx"],
+        task["shot_idx"],
+        False,
+        None,
+        "All candidates failed validation",
+    )
+
+
+def _validate_thumbnail(
+    video_id: str, label: str, query: str
+) -> Tuple[bool, float, str]:
+    """Validate a YouTube video by its thumbnail (instant, no download needed).
+
+    Downloads the YouTube thumbnail image and validates with Gemini vision.
+    Much faster than downloading the full video for validation.
+    Returns (is_match, confidence, reason).
+    """
+    import tempfile
+
+    # YouTube thumbnail URLs in order of quality
+    thumb_urls = [
+        f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg",
+        f"https://i.ytimg.com/vi/{video_id}/sddefault.jpg",
+        f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",
+    ]
+
+    thumb_path = None
+    try:
+        for url in thumb_urls:
+            try:
+                req = urllib.request.Request(
+                    url,
+                    headers={"User-Agent": "Mozilla/5.0"},
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    if resp.status == 200:
+                        data = resp.read()
+                        if len(data) > 1000:  # Skip placeholder thumbnails
+                            thumb_path = tempfile.mktemp(suffix=".jpg")
+                            with open(thumb_path, "wb") as f:
+                                f.write(data)
+                            break
+            except Exception:
+                continue
+
+        if not thumb_path:
+            return True, 0.5, "No thumbnail available"
+
+        from src.gemini_vision_validator import validate_shot
+
+        return validate_shot(thumb_path, label, query, footage_start=0)
+    except Exception as e:
+        return True, 0.5, f"Thumbnail validation error: {e}"
+    finally:
+        if thumb_path and os.path.exists(thumb_path):
+            try:
+                os.remove(thumb_path)
+            except OSError:
+                pass
+
+
+def _validate_file(
+    file_path: str, label: str, query: str, footage_start: float = 5.0
+) -> Tuple[bool, float, str]:
+    """Validate a file with Gemini vision. Returns (is_match, confidence, reason)."""
+    try:
+        from src.gemini_vision_validator import validate_shot
+
+        return validate_shot(file_path, label, query, footage_start)
+    except Exception as e:
+        # If validator unavailable, skip validation (accept file)
+        return True, 0.5, f"Validator error: {e}"
+
+
 def safe_print(msg: str):
     """Thread-safe printing"""
     with print_lock:
         print(msg, flush=True)
 
 
+def _update_script_footage(segments, seg_idx, shot_idx, footage_file, title):
+    """Update a segment or shot in the script with downloaded footage info."""
+    seg = segments[seg_idx]
+    if shot_idx is not None and "shots" in seg:
+        seg["shots"][shot_idx]["footage"] = footage_file
+        if title and not title.startswith("image:"):
+            seg["shots"][shot_idx]["footage_title"] = title
+    else:
+        seg["footage"] = footage_file
+        if title and not title.startswith("image:"):
+            seg["footage_title"] = title
+
+
 def main():
     parser = argparse.ArgumentParser(description="Download footage from YouTube")
     parser.add_argument("--project", required=True, help="Project name")
     parser.add_argument("--segment", type=int, help="Segment ID to download for")
+    parser.add_argument(
+        "--shot", type=int, help="Shot index within segment (use with --segment)"
+    )
     parser.add_argument("--query", help="Custom search query")
     parser.add_argument("--url", help="Direct YouTube URL")
     parser.add_argument(
@@ -512,6 +1021,17 @@ def main():
         dest="use_4k",
         help="Download 4K resolution (up to 2160p) instead of HD (1080p)",
     )
+    parser.add_argument(
+        "--google-search",
+        action="store_true",
+        dest="google_search",
+        help="Use Google search for better YouTube/image results",
+    )
+    parser.add_argument(
+        "--validate",
+        action="store_true",
+        help="Validate footage with Gemini vision after download",
+    )
     args = parser.parse_args()
 
     project_dir = get_project_dir(args.project)
@@ -534,22 +1054,86 @@ def main():
         print(f"Footage Status - Project: {args.project}")
         print("=" * 60)
         for i, seg in enumerate(segments):
-            footage_file = f"{footage_dir}/{seg.get('footage', f'segment_{i:02d}.mp4')}"
-            status = "OK" if os.path.exists(footage_file) else "MISSING"
-            print(f"[{i}] {status:7} | {seg['context']}")
-            if "footage_title" in seg:
-                print(f"    Title: {seg['footage_title'][:60]}")
+            seg_norm = normalize_segment(dict(seg))  # Don't mutate original
+            shots = seg_norm.get("shots", [])
+            has_multi_shots = "shots" in seg and len(seg.get("shots", [])) > 1
+
+            if has_multi_shots:
+                # Multi-shot segment: show per-shot status
+                total_shots = len(shots)
+                ok_count = 0
+                for shot_idx, shot in enumerate(shots):
+                    source_type = shot.get("source_type", "youtube_clip")
+                    if source_type not in ("youtube_clip", "image"):
+                        ok_count += 1  # Non-downloadable shots are always "OK"
+                        continue
+                    ext = get_shot_source_ext(source_type)
+                    footage_file = shot.get(
+                        "footage", shot_footage_filename(i, shot_idx, ext)
+                    )
+                    if os.path.exists(os.path.join(footage_dir, footage_file)):
+                        ok_count += 1
+
+                seg_status = (
+                    "OK" if ok_count == total_shots else f"{ok_count}/{total_shots}"
+                )
+                print(f"[{i}] {seg_status:7} | {seg['context']} ({total_shots} shots)")
+
+                for shot_idx, shot in enumerate(shots):
+                    source_type = shot.get("source_type", "youtube_clip")
+                    ext = get_shot_source_ext(source_type)
+                    footage_file = shot.get(
+                        "footage", shot_footage_filename(i, shot_idx, ext)
+                    )
+                    exists = os.path.exists(os.path.join(footage_dir, footage_file))
+
+                    if source_type not in ("youtube_clip", "image"):
+                        shot_status = "SKIP"
+                    elif exists:
+                        shot_status = "OK"
+                    else:
+                        shot_status = "MISS"
+
+                    label = shot.get("label", f"Shot {shot_idx}")[:45]
+                    print(
+                        f"    Shot {shot_idx}: {shot_status:4} {footage_file} - {label} [{source_type}]"
+                    )
+            else:
+                # Legacy single-shot segment
+                footage_file = (
+                    f"{footage_dir}/{seg.get('footage', f'segment_{i:02d}.mp4')}"
+                )
+                status = "OK" if os.path.exists(footage_file) else "MISSING"
+                print(f"[{i}] {status:7} | {seg['context']}")
+                if "footage_title" in seg:
+                    print(f"    Title: {seg['footage_title'][:60]}")
+
             print(f"    Text: {seg['text'][:50]}...")
             if seg.get("visual"):
                 print(f"    Visual: {seg['visual'][:60]}")
-            if "footage_query" in seg:
+            if not has_multi_shots and "footage_query" in seg:
                 print(f"    Query: {seg['footage_query']}")
             print()
         return
 
     if args.segment is not None:
         segment = segments[args.segment]
-        output_file = f"{footage_dir}/segment_{args.segment:02d}.mp4"
+
+        # Determine output file based on --shot flag
+        if args.shot is not None:
+            seg_norm = normalize_segment(dict(segment))
+            shots = seg_norm.get("shots", [])
+            if args.shot >= len(shots):
+                print(
+                    f"Error: Shot {args.shot} does not exist (segment has {len(shots)} shots)"
+                )
+                sys.exit(1)
+            shot = shots[args.shot]
+            source_type = shot.get("source_type", "youtube_clip")
+            ext = get_shot_source_ext(source_type)
+            output_file = f"{footage_dir}/{shot.get('footage', shot_footage_filename(args.segment, args.shot, ext))}"
+        else:
+            output_file = f"{footage_dir}/segment_{args.segment:02d}.mp4"
 
         if args.url:
             # Direct URL download
@@ -574,9 +1158,17 @@ def main():
                     else None
                 )
                 # Update script with footage filename and title
-                segment["footage"] = f"segment_{args.segment:02d}.mp4"
+                if args.shot is not None and "shots" in segment:
+                    segment["shots"][args.shot]["footage"] = os.path.basename(
+                        output_file
+                    )
+                    if video_title:
+                        segment["shots"][args.shot]["footage_title"] = video_title
+                else:
+                    segment["footage"] = f"segment_{args.segment:02d}.mp4"
+                    if video_title:
+                        segment["footage_title"] = video_title
                 if video_title:
-                    segment["footage_title"] = video_title
                     print(f"Title: {video_title}")
                 with open(script_file, "w") as f:
                     json.dump(script, f, indent=2)
@@ -584,8 +1176,16 @@ def main():
                 print(f"Download failed: {error}")
         else:
             # Search with enhanced ranking
-            query = args.query or segment.get("footage_query", segment["text"][:50])
-            visual = segment.get("visual", "")
+            if args.shot is not None:
+                seg_norm = normalize_segment(dict(segment))
+                shot = seg_norm["shots"][args.shot]
+                query = args.query or shot.get(
+                    "footage_query", shot.get("image_query", "")
+                )
+                visual = shot.get("label", "")
+            else:
+                query = args.query or segment.get("footage_query", segment["text"][:50])
+                visual = segment.get("visual", "")
             print(f"Original query: {query}")
             if visual:
                 print(f"Visual: {visual}")
@@ -623,96 +1223,145 @@ def main():
                 )
                 if success:
                     print(f"Saved to: {output_file}")
-                    segment["footage"] = f"segment_{args.segment:02d}.mp4"
-                    segment["footage_title"] = top["title"]
+                    if args.shot is not None and "shots" in segment:
+                        segment["shots"][args.shot]["footage"] = os.path.basename(
+                            output_file
+                        )
+                        segment["shots"][args.shot]["footage_title"] = top["title"]
+                    else:
+                        segment["footage"] = f"segment_{args.segment:02d}.mp4"
+                        segment["footage_title"] = top["title"]
                     with open(script_file, "w") as f:
                         json.dump(script, f, indent=2)
                 else:
                     print(f"Download failed: {error}")
+                    shot_flag = f" --shot {args.shot}" if args.shot is not None else ""
                     print("\nTo try a different video:")
                     print(
-                        f"  python3 src/footage_downloader.py --project {args.project} --segment {args.segment} --url https://youtube.com/watch?v=VIDEO_ID"
+                        f"  python3 src/footage_downloader.py --project {args.project} --segment {args.segment}{shot_flag} --url https://youtube.com/watch?v=VIDEO_ID"
                     )
             else:
                 print("\nNo candidates found. Try a different --query.")
     else:
-        # Download all missing footage
+        # Download all missing footage (supports multi-shot segments)
         print("=" * 60)
         print(f"Downloading All Footage - Project: {args.project}")
         print(f"Resolution: {'4K (2160p)' if args.use_4k else 'HD (1080p)'}")
-        print(
-            f"Concurrency: {'Sequential' if args.sequential else f'{args.workers} workers'}"
-        )
+        # Force sequential mode when validating (Gemini rate limits)
+        if getattr(args, "validate", False) and not args.sequential:
+            args.sequential = True
+            print("Concurrency: Sequential (required for --validate)")
+        else:
+            print(
+                f"Concurrency: {'Sequential' if args.sequential else f'{args.workers} workers'}"
+            )
         print("=" * 60)
 
-        # Prepare tasks
-        tasks = []
-        for i, seg in enumerate(segments):
-            footage_file = seg.get("footage", f"segment_{i:02d}.mp4")
-            tasks.append((i, seg, footage_dir, footage_file))
+        # Build download tasks from segments (respects shot lists)
+        dl_tasks = get_download_tasks(segments, footage_dir)
+
+        # Inject validation and search flags into each task
+        for task in dl_tasks:
+            task["use_google"] = getattr(args, "google_search", False)
+            task["validate"] = getattr(args, "validate", False)
+
+        features = []
+        if getattr(args, "google_search", False):
+            features.append("Google Search")
+        if getattr(args, "validate", False):
+            features.append("Gemini Validation")
+        if features:
+            print(f"Features: {', '.join(features)}")
+
+        print(
+            f"\n{len(dl_tasks)} download tasks ({sum(1 for t in dl_tasks if t['shot_idx'] is not None)} shots, "
+            f"{sum(1 for t in dl_tasks if t['shot_idx'] is None)} legacy segments)\n"
+        )
 
         downloaded = 0
         cached = 0
         failed = 0
 
         if args.sequential:
-            # Sequential processing
-            for task in tasks:
-                idx, seg, _, footage_file = task
-                print(f"[{idx}] Processing: {seg['context']}...", end=" ", flush=True)
-                idx, success, title, error = download_segment(task)
+            for task in dl_tasks:
+                seg_idx = task["seg_idx"]
+                shot_idx = task["shot_idx"]
+                label = task["visual"] or segments[seg_idx].get("context", "")
+                shot_str = f" shot {shot_idx}" if shot_idx is not None else ""
+                print(
+                    f"[{seg_idx}{shot_str}] Processing: {label}...", end=" ", flush=True
+                )
+
+                seg_idx, shot_idx, success, title, error = download_task(
+                    (task, footage_dir)
+                )
                 if title == "cached":
-                    segments[idx]["footage"] = f"segment_{idx:02d}.mp4"
                     print("Cached")
                     cached += 1
                 elif success:
-                    segments[idx]["footage"] = f"segment_{idx:02d}.mp4"
-                    segments[idx]["footage_title"] = title
                     print(f"Done - {title}")
                     downloaded += 1
+                    # Update script with downloaded filename
+                    _update_script_footage(
+                        segments, seg_idx, shot_idx, task["footage_file"], title
+                    )
                 else:
                     print(f"Failed: {error}")
                     failed += 1
         else:
-            # Concurrent processing
-            print(f"\nDownloading {len(tasks)} segments concurrently...\n")
+            print(f"Downloading {len(dl_tasks)} items concurrently...\n")
 
             with ThreadPoolExecutor(max_workers=args.workers) as executor:
-                future_to_idx = {
-                    executor.submit(download_segment, task): task[0] for task in tasks
+                future_to_task = {
+                    executor.submit(download_task, (task, footage_dir)): task
+                    for task in dl_tasks
                 }
 
-                for future in as_completed(future_to_idx):
-                    idx, success, title, error = future.result()
-                    seg = segments[idx]
+                for future in as_completed(future_to_task):
+                    seg_idx, shot_idx, success, title, error = future.result()
+                    task = future_to_task[future]
+                    label = task["visual"] or segments[seg_idx].get("context", "")
+                    shot_str = f" shot {shot_idx}" if shot_idx is not None else ""
 
                     if title == "cached":
-                        segments[idx]["footage"] = f"segment_{idx:02d}.mp4"
-                        safe_print(f"[{idx}] Cached: {seg['context']}")
+                        safe_print(f"[{seg_idx}{shot_str}] Cached: {label}")
                         cached += 1
                     elif success:
-                        segments[idx]["footage"] = f"segment_{idx:02d}.mp4"
-                        segments[idx]["footage_title"] = title
-                        safe_print(f"[{idx}] Downloaded: {seg['context']} -> {title}")
+                        safe_print(
+                            f"[{seg_idx}{shot_str}] Downloaded: {label} -> {title}"
+                        )
                         downloaded += 1
+                        _update_script_footage(
+                            segments, seg_idx, shot_idx, task["footage_file"], title
+                        )
                     else:
-                        safe_print(f"[{idx}] Failed: {seg['context']} - {error}")
+                        safe_print(f"[{seg_idx}{shot_str}] Failed: {label} - {error}")
                         failed += 1
 
-        # Check for duplicate video downloads
-        title_to_segments = {}
-        for i, seg in enumerate(segments):
-            title = seg.get("footage_title", "")
-            if title and title != "cached":
-                title_to_segments.setdefault(title, []).append(i)
-        duplicates = {t: idxs for t, idxs in title_to_segments.items() if len(idxs) > 1}
+        # Check for duplicate video downloads (across all shots and segments)
+        title_to_items = {}
+        for task in dl_tasks:
+            seg = segments[task["seg_idx"]]
+            if task["shot_idx"] is not None and "shots" in seg:
+                shot = seg["shots"][task["shot_idx"]]
+                title = shot.get("footage_title", "")
+            else:
+                title = seg.get("footage_title", "")
+            if title and title != "cached" and not title.startswith("image:"):
+                key = f"[{task['seg_idx']}]" + (
+                    f" shot {task['shot_idx']}" if task["shot_idx"] is not None else ""
+                )
+                title_to_items.setdefault(title, []).append(key)
+        duplicates = {t: items for t, items in title_to_items.items() if len(items) > 1}
         if duplicates:
             print(f"\n{'!' * 60}")
             print("WARNING: Duplicate videos detected!")
-            for title, idxs in duplicates.items():
-                seg_list = ", ".join(f"[{i}]" for i in idxs)
-                print(f"  Segments {seg_list} share: {title}")
-            print("Consider using --segment N --query to find different footage")
+            for title, items in duplicates.items():
+                item_list = ", ".join(items)
+                print(f"  {item_list} share: {title}")
+            print(
+                "Consider using --segment N --shot M --query to find different footage"
+            )
             print(f"{'!' * 60}")
 
         # Save updated script

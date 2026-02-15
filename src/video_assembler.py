@@ -28,6 +28,7 @@ from src.config import (
     F1_DEFAULT_COLOR,
     F1_TEAM_COLORS,
     FRAME_RATE,
+    MIN_SHOT_DURATION,
     MUSIC_VOLUME,
     OUTPUT_HEIGHT,
     OUTPUT_WIDTH,
@@ -35,6 +36,13 @@ from src.config import (
     SHORTS_MAX_TEXT_LINES,
     VIDEO_BITRATE,
     get_project_dir,
+)
+from src.shot_assembler import (
+    TRANSITION_DEFAULTS,
+    calculate_shot_timings,
+    create_shot_clip,
+    normalize_segment,
+    stitch_shots_with_transitions,
 )
 
 # Concurrency settings
@@ -103,6 +111,47 @@ def get_duration(file_path):
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     return float(result.stdout.strip()) if result.stdout.strip() else 0
+
+
+def get_video_stream_duration(file_path):
+    """Get duration from the video stream (not container).
+
+    Container duration can be longer than video stream when audio is longer,
+    which causes xfade offset miscalculation. This returns the actual video
+    frame-based duration.
+    """
+    cmd = [
+        "ffprobe",
+        "-v",
+        "quiet",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=duration,nb_frames,r_frame_rate",
+        "-of",
+        "json",
+        file_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        import json as _json
+
+        data = _json.loads(result.stdout)
+        stream = data["streams"][0]
+        # Prefer stream duration if available
+        if stream.get("duration") and stream["duration"] != "N/A":
+            return float(stream["duration"])
+        # Fall back to nb_frames / fps
+        nb_frames = int(stream.get("nb_frames", 0))
+        fps_str = stream.get("r_frame_rate", "30/1")
+        num, den = fps_str.split("/")
+        fps = int(num) / int(den) if int(den) > 0 else 30
+        if nb_frames > 0:
+            return nb_frames / fps
+    except (ValueError, KeyError, IndexError, TypeError):
+        pass
+    # Fallback to container duration
+    return get_duration(file_path)
 
 
 def download_music_if_needed():
@@ -177,6 +226,310 @@ def get_team_color(text):
     return F1_DEFAULT_COLOR
 
 
+def _create_multishot_segment(
+    segment_idx,
+    segment,
+    shots,
+    audio_path,
+    audio_duration,
+    footage_dir,
+    output_path,
+    video_encoder,
+    encoder_flags,
+):
+    """Create a segment video from multiple shots with transitions.
+
+    Each shot is rendered as a separate clip (blur-pad for video, Ken Burns
+    for images, etc.), then stitched together with the specified transitions.
+    Text captions and audio are applied on top of the final stitched video.
+
+    Returns:
+        Tuple of (success: bool, error_message: Optional[str])
+    """
+    import tempfile
+
+    work_dir = os.path.join(os.path.dirname(output_path), f"shots_{segment_idx:02d}")
+    os.makedirs(work_dir, exist_ok=True)
+
+    # Calculate timing for each shot from text_cue positions
+    shot_timings = calculate_shot_timings(
+        segment.get("text", ""), shots, audio_duration, MIN_SHOT_DURATION
+    )
+
+    # Calculate total xfade overlap so we can inflate shot durations.
+    # Each non-cut transition between shots shortens the stitched video by
+    # its transition_duration.  We distribute that lost time across shots
+    # proportionally so the final stitched video length == audio_duration.
+    total_overlap = 0.0
+    for s_idx in range(1, len(shots)):
+        tr = shots[s_idx].get("transition_in", "cut")
+        if tr != "cut":
+            total_overlap += shots[s_idx].get(
+                "transition_duration",
+                TRANSITION_DEFAULTS.get(tr, 0.3),
+            )
+
+    # Distribute overlap across shots proportionally to their duration
+    if total_overlap > 0:
+        total_shot_time = sum(e - s for s, e in shot_timings)
+        inflated_timings = []
+        for s_idx, (start, end) in enumerate(shot_timings):
+            raw_dur = end - start
+            extra = (
+                total_overlap * (raw_dur / total_shot_time)
+                if total_shot_time > 0
+                else 0
+            )
+            inflated_timings.append((start, end, raw_dur + extra))
+    else:
+        inflated_timings = [(s, e, e - s) for s, e in shot_timings]
+
+    # Create each shot as a separate clip
+    shot_clips = []
+    for shot_idx, (shot, (start_time, end_time, shot_duration)) in enumerate(
+        zip(shots, inflated_timings)
+    ):
+        clip_path = os.path.join(work_dir, f"shot_{shot_idx:02d}.mp4")
+
+        # Fill in missing footage field using naming convention
+        if not shot.get("footage"):
+            from src.shot_assembler import get_shot_source_ext, shot_footage_filename
+
+            ext = get_shot_source_ext(shot.get("source_type", "youtube_clip"))
+            convention_name = shot_footage_filename(segment_idx, shot_idx, ext)
+            convention_path = os.path.join(footage_dir, convention_name)
+            if os.path.exists(convention_path):
+                shot["footage"] = convention_name
+            # Fallback: segment-level footage (for single-shot normalized segments)
+            elif segment.get("footage") and os.path.exists(
+                os.path.join(footage_dir, segment["footage"])
+            ):
+                shot["footage"] = segment["footage"]
+
+        success = create_shot_clip(
+            shot=shot,
+            clip_path=clip_path,
+            duration=shot_duration,
+            footage_dir=footage_dir,
+            width=OUTPUT_WIDTH,
+            height=OUTPUT_HEIGHT,
+            is_shorts=True,
+            gpu_encoder=video_encoder,
+            gpu_flags=encoder_flags,
+        )
+
+        if success and os.path.exists(clip_path):
+            shot_clips.append(clip_path)
+        else:
+            src_type = shot.get("source_type", "unknown")
+            footage = shot.get("footage", "none")
+            print(
+                f"      Shot {shot_idx} failed ({src_type}: {shot.get('label', 'unknown')[:30]}, footage={footage})"
+            )
+
+    if not shot_clips:
+        return False, "No shot clips created"
+
+    if len(shot_clips) == 1:
+        # Only one shot succeeded -- use it directly
+        stitched_path = shot_clips[0]
+    else:
+        # Stitch shots together with transitions
+        stitched_path = os.path.join(work_dir, "stitched.mp4")
+
+        # Build the list of shots/timings matching only successful clips
+        successful_shots = []
+        successful_timings = []
+        for shot_idx, (shot, timing) in enumerate(zip(shots, shot_timings)):
+            clip_path = os.path.join(work_dir, f"shot_{shot_idx:02d}.mp4")
+            if clip_path in shot_clips:
+                successful_shots.append(shot)
+                successful_timings.append(timing)
+
+        success = stitch_shots_with_transitions(
+            clip_paths=shot_clips,
+            shots=successful_shots,
+            shot_timings=successful_timings,
+            output_path=stitched_path,
+            gpu_encoder=video_encoder,
+            gpu_flags=encoder_flags,
+        )
+
+        if not success:
+            return False, "Failed to stitch shots"
+
+    # Build text caption filters (same logic as single-shot path)
+    lines = wrap_text(segment["text"], max_chars=25)
+    team_color = get_team_color(segment["text"])
+    f1_font = "/Users/abhaykumar/Documents/f1.ai/shared/fonts/Formula1-Bold.ttf"
+
+    base_font_size = 72
+    if len(lines) > 3:
+        font_size = 52
+    elif len(lines) > 2:
+        font_size = 60
+    else:
+        font_size = base_font_size
+
+    line_height = int(font_size * 1.2)
+    drawtext_filters = []
+
+    if len(lines) >= SHORTS_MAX_TEXT_LINES:
+        text = segment["text"]
+        max_lines_per_part = SHORTS_MAX_TEXT_LINES - 1
+
+        parts = []
+        remaining = text.strip()
+        while remaining:
+            words = remaining.split()
+            best_split = 0
+            for i in range(1, len(words) + 1):
+                candidate = " ".join(words[:i])
+                if len(wrap_text(candidate, max_chars=25)) <= max_lines_per_part:
+                    best_split = i
+                else:
+                    break
+            if best_split == 0:
+                best_split = 1
+
+            candidate_text = " ".join(words[:best_split])
+            for boundary in [". ", "! ", "? ", ", ", "; ", " - "]:
+                pos = candidate_text.rfind(boundary)
+                if pos > len(candidate_text) * 0.3:
+                    test_part = candidate_text[: pos + len(boundary)].strip()
+                    if len(wrap_text(test_part, max_chars=25)) >= 2:
+                        candidate_text = test_part
+                        best_split = len(candidate_text.split())
+                        break
+
+            part_text = " ".join(words[:best_split])
+            parts.append(part_text)
+            remaining = " ".join(words[best_split:]).strip()
+
+        total_chars = sum(len(p) for p in parts)
+
+        def _part_font_size(num_lines):
+            if num_lines > 3:
+                return 52
+            elif num_lines > 2:
+                return 60
+            return base_font_size
+
+        cumulative_time = 0.0
+        for part_idx, part_text in enumerate(parts):
+            part_lines = wrap_text(part_text, max_chars=25)
+            part_duration = audio_duration * (len(part_text) / total_chars)
+            start_time_part = cumulative_time
+            end_time_part = cumulative_time + part_duration
+            cumulative_time = end_time_part
+
+            p_fs = _part_font_size(len(part_lines))
+            p_lh = int(p_fs * 1.2)
+            p_start_y = OUTPUT_HEIGHT - SHORTS_BOTTOM_MARGIN - len(part_lines) * p_lh
+
+            for i, line in enumerate(part_lines):
+                escaped_line = escape_text_for_ffmpeg(line)
+                y_pos = p_start_y + (i * p_lh)
+
+                if part_idx == 0:
+                    enable_cond = f"lt(t,{end_time_part:.2f})"
+                elif part_idx == len(parts) - 1:
+                    enable_cond = f"gte(t,{start_time_part:.2f})"
+                else:
+                    enable_cond = (
+                        f"gte(t,{start_time_part:.2f})*lt(t,{end_time_part:.2f})"
+                    )
+
+                drawtext_filters.append(
+                    f"drawtext=text='{escaped_line}':"
+                    f"fontfile={f1_font}:"
+                    f"fontsize={p_fs}:fontcolor=black@0.5:"
+                    f"x=(w-text_w)/2+3:y={y_pos}+3:"
+                    f"enable='{enable_cond}'"
+                )
+                drawtext_filters.append(
+                    f"drawtext=text='{escaped_line}':"
+                    f"fontfile={f1_font}:"
+                    f"fontsize={p_fs}:fontcolor={team_color}:"
+                    f"x=(w-text_w)/2:y={y_pos}:"
+                    f"enable='{enable_cond}'"
+                )
+
+    if not drawtext_filters:
+        total_text_height = len(lines) * line_height
+        start_y = OUTPUT_HEIGHT - SHORTS_BOTTOM_MARGIN - total_text_height
+
+        for i, line in enumerate(lines):
+            escaped_line = escape_text_for_ffmpeg(line)
+            y_pos = start_y + (i * line_height)
+            drawtext_filters.append(
+                f"drawtext=text='{escaped_line}':"
+                f"fontfile={f1_font}:"
+                f"fontsize={font_size}:fontcolor=black@0.5:"
+                f"x=(w-text_w)/2+3:y={y_pos}+3"
+            )
+            drawtext_filters.append(
+                f"drawtext=text='{escaped_line}':"
+                f"fontfile={f1_font}:"
+                f"fontsize={font_size}:fontcolor={team_color}:"
+                f"x=(w-text_w)/2:y={y_pos}"
+            )
+
+    text_filter = ",".join(drawtext_filters) if drawtext_filters else "null"
+
+    # Pad the stitched video to match audio duration.
+    # After xfade stitching, the video can be slightly shorter than the audio
+    # due to transition overlaps and rounding. tpad clones the last frame to
+    # fill the gap, preventing video freeze in the final output.
+    total_frames_needed = int(audio_duration * FRAME_RATE) + 1
+    pad_filter = f"tpad=stop=-1:stop_mode=clone:stop_duration={audio_duration + 0.5}"
+
+    # Apply text overlay and audio on top of stitched video
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        stitched_path,
+        "-i",
+        audio_path,
+        "-filter_complex",
+        f"[0:v]{pad_filter},{text_filter}[out]",
+        "-map",
+        "[out]",
+        "-map",
+        "1:a",
+        "-c:v",
+        video_encoder,
+        *encoder_flags,
+        "-b:v",
+        VIDEO_BITRATE,
+        "-r",
+        str(FRAME_RATE),
+        "-c:a",
+        "aac",
+        "-b:a",
+        AUDIO_BITRATE,
+        "-t",
+        str(audio_duration),
+        "-movflags",
+        "+faststart",
+        output_path,
+    ]
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    # Clean up work directory
+    import shutil
+
+    shutil.rmtree(work_dir, ignore_errors=True)
+
+    if os.path.exists(output_path):
+        return True, None
+    return False, result.stderr[
+        -500:
+    ] if result.stderr else "Multi-shot assembly failed"
+
+
 def create_segment_video(
     segment_idx,
     segment,
@@ -186,13 +539,60 @@ def create_segment_video(
     encoder=None,
     encoder_flags=None,
 ):
-    """Create video segment with blur-pad effect and text captions"""
+    """Create video segment with blur-pad effect and text captions.
+
+    Supports multi-shot segments: if the segment has a 'shots' array with
+    more than one shot, each shot is rendered as a separate clip with its
+    own visual source, then stitched together with transitions. Text captions
+    and audio are applied on top of the stitched video.
+
+    For legacy single-shot segments (no 'shots' array or single shot),
+    the original single-footage path is used.
+    """
+    # Use provided encoder or fall back to detected GPU encoder
+    video_encoder = encoder or GPU_ENCODER
+    extra_flags = encoder_flags if encoder_flags is not None else GPU_ENCODER_FLAGS
+
+    audio_duration = get_duration(audio_path)
+
+    # Normalize segment to ensure shots array exists
+    segment = normalize_segment(segment)
+    shots = segment.get("shots", [])
+
+    # Multi-shot path: 2+ shots with actual footage/source files
+    if len(shots) > 1:
+        try:
+            result = _create_multishot_segment(
+                segment_idx,
+                segment,
+                shots,
+                audio_path,
+                audio_duration,
+                footage_dir,
+                output_path,
+                video_encoder,
+                extra_flags,
+            )
+            if result[0]:  # Success
+                return result
+            # If multi-shot fails, fall through to single-shot path
+            print(f"      Multi-shot failed: {result[1]}")
+            print(f"      Trying single-shot fallback...")
+        except Exception as e:
+            import traceback
+
+            print(f"      Multi-shot EXCEPTION: {e}")
+            traceback.print_exc()
+            print(f"      Trying single-shot fallback...")
+
+    # Single-shot path (original logic)
     footage_name = segment.get("footage", f"segment_{segment_idx:02d}.mp4")
+    # Also check first shot's footage field
+    if shots and shots[0].get("footage"):
+        footage_name = shots[0]["footage"]
     footage_file = f"{footage_dir}/{footage_name}"
     if not os.path.exists(footage_file):
         return False, f"Missing footage: {footage_name}"
-
-    audio_duration = get_duration(audio_path)
     start_time = segment.get("footage_start", 0)
 
     # Wrap and escape text for FFmpeg
@@ -349,10 +749,6 @@ def create_segment_video(
         f"[bg][fg]overlay=(W-w)/2:(H-h)/2,{text_filter}[out]"
     )
 
-    # Use provided encoder or fall back to detected GPU encoder
-    video_encoder = encoder or GPU_ENCODER
-    extra_flags = encoder_flags if encoder_flags is not None else GPU_ENCODER_FLAGS
-
     cmd = [
         "ffmpeg",
         "-y",
@@ -454,35 +850,56 @@ def add_background_music(video_path, output_path):
 
 
 def verify_output(video_path):
-    """Verify video and audio durations match"""
+    """Verify video duration and frame count are consistent.
+
+    Checks both container duration and the actual video stream frame count
+    to detect the common xfade bug where container is long but video frames
+    are truncated (video freezes while audio keeps playing).
+    """
     cmd = [
         "ffprobe",
         "-v",
         "error",
         "-show_entries",
-        "stream=codec_type,duration",
+        "format=duration",
+        "-show_entries",
+        "stream=nb_frames,r_frame_rate,codec_type,duration",
         "-of",
-        "csv=p=0",
+        "json",
         video_path,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
 
-    video_dur = audio_dur = 0
-    for line in result.stdout.strip().split("\n"):
-        parts = line.split(",")
-        if len(parts) == 2:
-            if parts[0] == "video":
-                video_dur = float(parts[1])
-            elif parts[0] == "audio":
-                audio_dur = float(parts[1])
+    try:
+        data = json.loads(result.stdout)
+        container_dur = float(data["format"]["duration"])
+    except (ValueError, AttributeError, KeyError):
+        return False, "Could not determine video duration"
 
-    diff = abs(video_dur - audio_dur)
-    if diff > 1.0:
-        return (
-            False,
-            f"Duration mismatch! Video: {video_dur:.1f}s, Audio: {audio_dur:.1f}s",
-        )
-    return True, f"Video: {video_dur:.1f}s, Audio: {audio_dur:.1f}s"
+    if container_dur < 5.0:
+        return False, f"Video too short: {container_dur:.1f}s"
+
+    # Check video stream frame count vs container duration
+    for stream in data.get("streams", []):
+        if stream.get("codec_type") == "video":
+            nb_frames = int(stream.get("nb_frames", 0))
+            fps_str = stream.get("r_frame_rate", "30/1")
+            try:
+                num, den = fps_str.split("/")
+                fps = int(num) / int(den) if int(den) > 0 else 30
+            except (ValueError, ZeroDivisionError):
+                fps = 30
+            if nb_frames > 0:
+                video_dur = nb_frames / fps
+                if video_dur < container_dur * 0.9:
+                    return False, (
+                        f"Frame mismatch: video has {nb_frames} frames "
+                        f"({video_dur:.1f}s at {fps:.0f}fps) but container is "
+                        f"{container_dur:.1f}s — video will freeze at {video_dur:.1f}s"
+                    )
+            break
+
+    return True, f"Duration: {container_dur:.1f}s"
 
 
 def main():
@@ -503,6 +920,12 @@ def main():
         choices=["auto", "videotoolbox", "nvenc", "cpu"],
         default="auto",
         help="Video encoder (default: auto-detect)",
+    )
+    parser.add_argument(
+        "--segment-transition",
+        choices=["cut", "cross_dissolve", "fade_to_black"],
+        default="cross_dissolve",
+        help="Transition between segments (default: cross_dissolve)",
     )
     args = parser.parse_args()
 
@@ -633,37 +1056,145 @@ def main():
         print("\nNo segments created!")
         sys.exit(1)
 
-    # Concatenate (re-encode to fix timestamps)
-    print(f"\nConcatenating {len(segment_videos)} segments...")
-
-    concat_file = f"{temp_dir}/concat.txt"
-    with open(concat_file, "w") as f:
-        for video in segment_videos:
-            f.write(f"file '{video}'\n")
+    # Concatenate with transitions
+    seg_transition = args.segment_transition
+    print(
+        f"\nConcatenating {len(segment_videos)} segments (transition: {seg_transition})..."
+    )
 
     concat_output = f"{temp_dir}/concat.mp4"
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-f",
-        "concat",
-        "-safe",
-        "0",
-        "-i",
-        concat_file,
-        "-c:v",
-        "h264_videotoolbox",  # Re-encode to normalize timestamps
-        "-b:v",
-        VIDEO_BITRATE,
-        "-c:a",
-        "aac",
-        "-b:a",
-        AUDIO_BITRATE,
-        "-movflags",
-        "+faststart",
-        concat_output,
-    ]
-    subprocess.run(cmd, capture_output=True)
+
+    if seg_transition == "cut" or len(segment_videos) < 2:
+        # Simple concat (hard cuts)
+        concat_file = f"{temp_dir}/concat.txt"
+        with open(concat_file, "w") as f:
+            for video in segment_videos:
+                f.write(f"file '{video}'\n")
+
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            concat_file,
+            "-c:v",
+            "h264_videotoolbox",
+            "-b:v",
+            VIDEO_BITRATE,
+            "-c:a",
+            "aac",
+            "-b:a",
+            AUDIO_BITRATE,
+            "-movflags",
+            "+faststart",
+            concat_output,
+        ]
+        subprocess.run(cmd, capture_output=True)
+    else:
+        # Transitions between segments using xfade + acrossfade
+        ffmpeg_transition = {
+            "cross_dissolve": "fade",
+            "fade_to_black": "fadeblack",
+        }.get(seg_transition, "fade")
+        transition_dur = 0.3
+
+        # Get VIDEO STREAM durations (not container) for accurate xfade offsets.
+        # Container duration can exceed video stream when audio is longer,
+        # causing xfade to produce truncated output (video freezes mid-playback).
+        seg_durations = []
+        for sv in segment_videos:
+            seg_durations.append(get_video_stream_duration(sv))
+
+        # Build xfade filter chain
+        inputs = []
+        for sv in segment_videos:
+            inputs.extend(["-i", sv])
+
+        # Video xfade chain
+        v_filters = []
+        a_filters = []
+        current_offset = seg_durations[0] - transition_dur
+
+        for i in range(1, len(segment_videos)):
+            in_v = f"[v{i - 1}]" if i > 1 else "[0:v]"
+            out_v = f"[v{i}]"
+            v_filters.append(
+                f"{in_v}[{i}:v]xfade=transition={ffmpeg_transition}"
+                f":duration={transition_dur}:offset={current_offset:.3f}{out_v}"
+            )
+
+            in_a = f"[a{i - 1}]" if i > 1 else "[0:a]"
+            out_a = f"[a{i}]"
+            a_filters.append(
+                f"{in_a}[{i}:a]acrossfade=d={transition_dur}:c1=tri:c2=tri{out_a}"
+            )
+
+            if i < len(segment_videos) - 1:
+                current_offset += seg_durations[i] - transition_dur
+
+        last_idx = len(segment_videos) - 1
+        filter_complex = ";".join(v_filters + a_filters)
+
+        cmd = [
+            "ffmpeg",
+            "-y",
+            *inputs,
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            f"[v{last_idx}]",
+            "-map",
+            f"[a{last_idx}]",
+            "-c:v",
+            "h264_videotoolbox",
+            "-b:v",
+            VIDEO_BITRATE,
+            "-c:a",
+            "aac",
+            "-b:a",
+            AUDIO_BITRATE,
+            "-movflags",
+            "+faststart",
+            concat_output,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if not os.path.exists(concat_output) or os.path.getsize(concat_output) == 0:
+            if os.path.exists(concat_output):
+                os.remove(concat_output)
+            # Fallback to simple concat if xfade fails
+            stderr_tail = result.stderr[-500:] if result.stderr else "no stderr"
+            print(f"  Transition concat failed: {stderr_tail}")
+            print(f"  Falling back to hard cuts...")
+            concat_file = f"{temp_dir}/concat.txt"
+            with open(concat_file, "w") as f:
+                for video in segment_videos:
+                    f.write(f"file '{video}'\n")
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                concat_file,
+                "-c:v",
+                "h264_videotoolbox",
+                "-b:v",
+                VIDEO_BITRATE,
+                "-c:a",
+                "aac",
+                "-b:a",
+                AUDIO_BITRATE,
+                "-movflags",
+                "+faststart",
+                concat_output,
+            ]
+            subprocess.run(cmd, capture_output=True)
 
     # Add music
     final_output = f"{output_dir}/final.mp4"

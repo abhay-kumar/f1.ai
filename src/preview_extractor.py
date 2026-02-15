@@ -16,6 +16,11 @@ from typing import List, Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import get_project_dir
+from src.shot_assembler import (
+    get_shot_source_ext,
+    normalize_segment,
+    shot_footage_filename,
+)
 
 # Concurrency settings
 MAX_CONCURRENT_EXTRACTIONS = 4
@@ -97,18 +102,56 @@ def extract_frames(
 
 
 def extract_segment_frames(args: Tuple) -> Tuple[int, str, List[Tuple[int, str]]]:
-    """Extract frames for a single segment (for concurrent execution across segments)"""
+    """Extract frames for a single segment (for concurrent execution across segments).
+
+    Supports multi-shot segments: extracts frames from each shot's footage file
+    separately, with shot-specific naming (seg01_shot00_t000.jpg).
+    """
     idx, segment, footage_dir, preview_dir, interval = args
+    all_frames = []
 
-    footage_file = segment.get("footage", f"segment_{idx:02d}.mp4")
-    full_path = f"{footage_dir}/{footage_file}"
+    seg_norm = normalize_segment(dict(segment))
+    shots = seg_norm.get("shots", [])
+    has_multi_shots = "shots" in segment and len(segment.get("shots", [])) > 1
 
-    if not os.path.exists(full_path):
-        return idx, segment.get("context", ""), []
+    if has_multi_shots:
+        # Multi-shot segment: extract from each shot's footage file
+        for shot_idx, shot in enumerate(shots):
+            source_type = shot.get("source_type", "youtube_clip")
+            ext = get_shot_source_ext(source_type)
+            footage_file = shot.get(
+                "footage", shot_footage_filename(idx, shot_idx, ext)
+            )
+            full_path = os.path.join(footage_dir, footage_file)
 
-    name = f"seg{idx:02d}"
-    frames = extract_frames(full_path, preview_dir, name, interval, concurrent=False)
-    return idx, segment.get("context", ""), frames
+            if not os.path.exists(full_path):
+                continue
+
+            # Images don't need frame extraction -- they are the preview
+            if source_type == "image":
+                all_frames.append((0, full_path))
+                continue
+
+            name = f"seg{idx:02d}_shot{shot_idx:02d}"
+            frames = extract_frames(
+                full_path, preview_dir, name, interval, concurrent=False
+            )
+            all_frames.extend(frames)
+    else:
+        # Legacy single-shot segment
+        footage_file = segment.get("footage", f"segment_{idx:02d}.mp4")
+        full_path = f"{footage_dir}/{footage_file}"
+
+        if not os.path.exists(full_path):
+            return idx, segment.get("context", ""), []
+
+        name = f"seg{idx:02d}"
+        frames = extract_frames(
+            full_path, preview_dir, name, interval, concurrent=False
+        )
+        all_frames = frames
+
+    return idx, segment.get("context", ""), all_frames
 
 
 def safe_print(msg: str):
@@ -170,26 +213,63 @@ def main():
     if args.sequential or len(segments_to_process) == 1:
         # Sequential processing
         for i, segment in segments_to_process:
-            footage_file = segment.get("footage", f"segment_{i:02d}.mp4")
-            full_path = f"{footage_dir}/{footage_file}"
-
-            if not os.path.exists(full_path):
-                print(f"[{i}] MISSING: {footage_file}")
-                continue
+            has_multi_shots = "shots" in segment and len(segment.get("shots", [])) > 1
 
             print(f"\n[{i}] {segment['context']}")
             if segment.get("visual"):
                 print(f"    Visual: {segment['visual'][:80]}")
             print(f"    Text: {segment['text'][:60]}...")
-            print(f"    Current footage_start: {segment.get('footage_start', 0)}s")
 
-            name = f"seg{i:02d}"
-            frames = extract_frames(full_path, preview_dir, name, args.interval)
-            total_frames += len(frames)
+            if has_multi_shots:
+                print(f"    Shots: {len(segment['shots'])}")
+                for shot_idx, shot in enumerate(segment["shots"]):
+                    label = shot.get("label", f"Shot {shot_idx}")
+                    source_type = shot.get("source_type", "youtube_clip")
+                    ext = get_shot_source_ext(source_type)
+                    footage_file = shot.get(
+                        "footage", shot_footage_filename(i, shot_idx, ext)
+                    )
+                    full_path = os.path.join(footage_dir, footage_file)
 
-            print(f"    Extracted {len(frames)} frames:")
-            for t, path in frames:
-                print(f"      t={t:3d}s -> {os.path.basename(path)}")
+                    if source_type == "image":
+                        if os.path.exists(full_path):
+                            print(
+                                f"    Shot {shot_idx} ({label}): {footage_file} [image]"
+                            )
+                            total_frames += 1
+                        else:
+                            print(
+                                f"    Shot {shot_idx} ({label}): MISSING {footage_file}"
+                            )
+                        continue
+
+                    if not os.path.exists(full_path):
+                        print(f"    Shot {shot_idx} ({label}): MISSING {footage_file}")
+                        continue
+
+                    name = f"seg{i:02d}_shot{shot_idx:02d}"
+                    frames = extract_frames(full_path, preview_dir, name, args.interval)
+                    total_frames += len(frames)
+                    print(f"    Shot {shot_idx} ({label}): {len(frames)} frames")
+                    for t, path in frames:
+                        print(f"      t={t:3d}s -> {os.path.basename(path)}")
+            else:
+                footage_file = segment.get("footage", f"segment_{i:02d}.mp4")
+                full_path = f"{footage_dir}/{footage_file}"
+
+                if not os.path.exists(full_path):
+                    print(f"    MISSING: {footage_file}")
+                    continue
+
+                print(f"    Current footage_start: {segment.get('footage_start', 0)}s")
+
+                name = f"seg{i:02d}"
+                frames = extract_frames(full_path, preview_dir, name, args.interval)
+                total_frames += len(frames)
+
+                print(f"    Extracted {len(frames)} frames:")
+                for t, path in frames:
+                    print(f"      t={t:3d}s -> {os.path.basename(path)}")
     else:
         # Concurrent processing across segments
         print(

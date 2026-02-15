@@ -4,13 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-F1.ai is an automated pipeline for creating F1-themed content. It supports three formats:
+F1.ai is an automated pipeline for creating F1-themed content. It supports four formats:
 
 1. **Shorts** (60-second vertical videos, 9:16) - Quick, engaging content for mobile
 2. **Long-form** (~10-minute horizontal videos, 16:9, up to 4K) - In-depth content with references
 3. **Podcasts** (~20-minute audio episodes) - Engaging monologue-style content for RSS.com/Spotify
+4. **Animated videos** (Remotion) - Programmatic React animations synced to voiceover for technical explainers
 
 **Video formats** orchestrate: script creation → fact checking → voiceover generation (Gemini TTS / ElevenLabs) → footage acquisition (yt-dlp) → video assembly (FFmpeg with GPU acceleration) → YouTube + Instagram upload.
+
+**Animated video format** orchestrates: script creation → TTS generation → VTT transcript parsing → Remotion animation composition → frame-by-frame rendering → video output.
 
 **Podcast format** orchestrates: script creation → single-request TTS generation (Gemini) → music mixing (intro/outro) → RSS.com upload.
 
@@ -36,14 +39,20 @@ python3 src/footage_downloader.py --project {name}
 python3 src/footage_downloader.py --project {name} --4k          # 4K resolution (2160p)
 python3 src/footage_downloader.py --project {name} --workers 5   # custom concurrency
 python3 src/footage_downloader.py --project {name} --sequential  # disable concurrency
+python3 src/footage_downloader.py --project {name} --google-search              # Use Google for better search results
+python3 src/footage_downloader.py --project {name} --validate                   # Validate footage with Gemini vision
+python3 src/footage_downloader.py --project {name} --google-search --validate   # Both (recommended for accuracy)
 
 # Download footage for specific segment (auto-downloads top result)
 python3 src/footage_downloader.py --project {name} --segment 0 --query "F1 race highlights"
 
+# Download footage for a specific shot within a segment
+python3 src/footage_downloader.py --project {name} --segment 0 --shot 2 --query "Mercedes F1 power unit"
+
 # Preview candidates without downloading
 python3 src/footage_downloader.py --project {name} --segment 0 --query "F1 race highlights" --dry-run
 
-# Check footage status (shows downloaded video titles)
+# Check footage status (shows per-shot status for multi-shot segments)
 python3 src/footage_downloader.py --project {name} --list
 
 # Download footage sequentially in isolated subprocesses (fallback when Python downloader hangs)
@@ -103,6 +112,42 @@ python3 src/youtube_uploader_longform.py --project {name} --dry-run  # Preview m
 python3 src/youtube_uploader_longform.py --project {name}             # Upload
 ```
 
+### Animated Video Commands (Remotion)
+
+```bash
+# Setup: Clone shared template into project
+cp -r shared/remotion-template projects/{name}/video
+cd projects/{name}/video && npm install
+
+# Concatenate audio chunks for Remotion
+ffmpeg -f concat -safe 0 -i <(for f in ../audio/chunk_*.mp3; do echo "file '$(cd .. && pwd)/audio/$(basename $f)'"; done) -c:a libmp3lame -b:a 256k public/audio.mp3
+
+# Preview in browser (Remotion Studio)
+npm run dev
+
+# Quick preview render (first 3 seconds)
+npm run preview
+
+# Full HD render (1920x1080, ~15min for 17min video)
+npm run render
+# Or with explicit options:
+npx remotion render F1Video --output output/final.mp4 --codec h264 --concurrency 4 --video-bitrate 12M
+
+# Background render (won't block terminal)
+nohup npx remotion render F1Video --output output/final.mp4 --codec h264 --concurrency 4 > /tmp/render.log 2>&1 &
+tail -f /tmp/render.log
+
+# 4K render
+npm run build:4k
+```
+
+**Key files to customize per project:**
+- `src/data/segments.ts` — Segment timing from VTT transcript, animation type mapping
+- `src/components/SegmentRenderer.tsx` — Animation router (which component for which segment)
+- `src/animations/*.tsx` — Animation components (15+ reusable, or create new ones)
+
+**See `shared/remotion-template/REMOTION_GUIDE.md` for full documentation.**
+
 ### Podcast Commands (Audio Only)
 
 ```bash
@@ -135,8 +180,11 @@ script.json → fact_check → audio/*.mp3 → footage/*.mp4 → previews/*.jpg 
 - `audio_generator.py` - Gemini TTS (default, free) / ElevenLabs TTS with caching and **concurrent processing**
 - `gemini_podcast_audio_generator.py` - **Podcast**: Single-request TTS for voice consistency
 - `podcast_music_mixer.py` - **Podcast**: Intro/outro music mixing with FFmpeg
-- `footage_downloader.py` - yt-dlp YouTube search/download with **concurrent downloads**, 4K support
-- `stock_image_fetcher.py` - Pexels/Unsplash API for stock photos (long-form fallback)
+- `footage_downloader.py` - yt-dlp YouTube search/download with **concurrent downloads**, 4K support, per-shot downloads
+- `shot_assembler.py` - Shared shot list logic: timing calculation, clip creation, transition stitching (used by both assemblers)
+- `stock_image_fetcher.py` - Pexels/Unsplash API for stock photos, Google Images for person portraits
+- `google_image_search.py` - Playwright-based Google Images scraper + Google-for-YouTube search
+- `gemini_vision_validator.py` - Gemini Flash vision validation for footage accuracy (thumbnail + file validation)
 - `image_video_assembler.py` - **Long-form**: YouTube-first visual routing with color grading, transition SFX, animated intro, context-aware music
 - `color_grader.py` - FFmpeg color grading presets (B&W, vintage, cinematic, warm, cool)
 - `intro_generator.py` - Animated logo intro with engine rev + swoosh SFX
@@ -151,10 +199,10 @@ script.json → fact_check → audio/*.mp3 → footage/*.mp4 → previews/*.jpg 
 **Project Structure (Video):**
 ```
 projects/{name}/
-├── script.json      # Segments with text, footage_query, footage_start
+├── script.json      # Segments with text, shots array, footage_query, footage_start
 ├── audio/           # Generated voiceovers (segment_00.mp3, ...)
-├── footage/         # Downloaded clips (segment_00.mp4, ...)
-├── previews/        # Frame extractions for QA
+├── footage/         # Downloaded clips (segment_00.mp4, segment_00_shot_01.mp4, ...)
+├── previews/        # Frame extractions for QA (seg00_shot00_t000.jpg, ...)
 ├── output/          # Final video (final.mp4)
 └── upload_info.json # YouTube + Instagram URLs after upload
 ```
@@ -169,6 +217,31 @@ projects/{name}/
     └── transcript.vtt    # WebVTT transcript for RSS.com
 ```
 
+**Project Structure (Animated Video - Remotion):**
+```
+projects/{name}/
+├── script.json      # Segments with text, context, emotion
+├── audio/           # Generated voiceovers (chunk_000.mp3, ...)
+├── output/
+│   ├── transcript.vtt  # VTT timestamps (used for segment timing)
+│   └── final.mp3       # Podcast output (if dual-format)
+└── video/           # Remotion project (cloned from shared/remotion-template)
+    ├── public/
+    │   └── audio.mp3   # Concatenated audio for video
+    ├── src/
+    │   ├── data/segments.ts      # Segment timing + animation mapping
+    │   ├── components/           # Background, SubtitleBar, Transitions, SegmentRenderer
+    │   └── animations/           # 15+ animation components
+    └── output/
+        └── final.mp4             # Rendered video
+```
+
+**Remotion Shared Template (`shared/remotion-template/`):**
+- Reusable scaffold for any animated F1 video
+- Clone into project with `cp -r shared/remotion-template projects/{name}/video`
+- Contains 15+ animation components, team colors, background system
+- See `shared/remotion-template/REMOTION_GUIDE.md` for full docs
+
 **External Dependencies:**
 - ffmpeg/ffprobe (video processing)
 - yt-dlp (YouTube download - for shorts) + PO Token plugins (see below)
@@ -180,6 +253,10 @@ projects/{name}/
 - instagrapi (Instagram Reels upload, `pip install instagrapi`)
 - SerpAPI (fact checking web search, optional)
 - OpenAI API (DALL-E graphics - optional)
+- Playwright (`pip install playwright && playwright install chromium` - Google search scraping for `--google-search`)
+- Google Gemini Flash vision (free tier via `google-genai` - footage validation for `--validate`)
+- Remotion (`npm install remotion @remotion/cli` - animated video rendering)
+- Node.js (required for Remotion)
 
 ## Critical Technical Notes
 
@@ -215,10 +292,47 @@ projects/{name}/
     # Blue (35,56,81) = Alpine, Papaya (255,135,0) = McLaren
     ```
 
+## Footage Validation (`--google-search --validate`)
+
+The footage downloader supports Google-powered search and Gemini Flash vision validation to improve footage accuracy. Without these flags, yt-dlp `ytsearch` keyword matching and Pexels stock photos often return wrong content (0% accuracy on daily news shorts).
+
+### How It Works
+
+1. **`--google-search`**: Uses Playwright headless Chromium to scrape Google Images (for `image` shots) and Google `site:youtube.com` search (for `youtube_clip` shots) before falling back to Pexels/ytsearch. Google results are significantly more accurate for specific people, teams, and events.
+
+2. **`--validate`**: Before downloading a video, validates each candidate's YouTube thumbnail with Gemini Flash vision. Only downloads the full video for the first thumbnail that passes validation. For images, downloads and validates each candidate directly. Forces sequential mode (Gemini rate limits).
+
+### Validation Flow
+```
+Image shots:  Google Images → download each → Gemini validate → accept/reject → Pexels fallback
+Video shots:  Google YouTube → ytsearch → validate thumbnails → download winner
+All fail:     Download best-confidence candidate as "unverified"
+```
+
+### Performance
+- Without flags: ~45s (concurrent)
+- `--google-search` only: ~60s (adds Playwright scraping)
+- `--google-search --validate`: ~3-5min (adds Gemini calls, sequential mode, but thumbnail validation avoids unnecessary video downloads)
+
+### Standalone Validation
+```bash
+# Validate a single file against expected content
+python3 src/gemini_vision_validator.py --file path/to/file.mp4 --expected "Red Bull RB22 on track" --query "Red Bull F1 2026"
+
+# Validate all shots in a project
+python3 src/gemini_vision_validator.py --project {name}
+```
+
+### Known Limitations
+- Google regular search triggers CAPTCHAs frequently; Google Images works more reliably
+- YouTube thumbnails don't always represent video content at `footage_start` timestamp
+- Gemini free tier is 15 RPM — validation adds ~4s per candidate
+- Niche queries (specific car models, technical concepts) often fail all candidates
+
 ## Daily News Shorts Lessons
 
 1. **Pronunciation vs spelling in script.json** - The `text` field is used for BOTH audio generation AND text overlay. If you respell a name for pronunciation (e.g., "Laurent" → "Lorahn"), the misspelling will appear on screen. Instead, fix pronunciation in the `text` field, generate the audio with the phonetic spelling, then restore the correct spelling before video assembly. The cached MP3s won't regenerate as long as the files exist.
-2. **Composite segments for visual storytelling** - When a segment covers multiple topics (e.g., a person + a concept), build composite footage by concatenating multiple clips with FFmpeg concat demuxer. Use `ffmpeg -af silencedetect` on the audio to find natural pause points for transitions.
+2. **Shot lists for visual storytelling** - When a segment covers multiple topics (e.g., a person + a concept), use the `shots` array in script.json to define multiple visual beats per segment. Each shot maps to a `text_cue` substring and gets its own footage/image. The assembler handles timing and transitions automatically. See "Shot List (Multi-Visual Segments)" in the script.json format section.
 3. **Blurred background aspect ratio fix** - The common `scale=1080:-2` for foreground in 9:16 frame causes stretching on some sources. For 16:9 (1920x1080) sources, explicitly use `scale=1080:608` to maintain correct aspect ratio instead of relying on `-2` auto-calculation.
 4. **Skip jittery interview cuts** - Interview footage from YouTube often has abrupt transitions at clip boundaries. Always preview the first 1-2 seconds of interview clips and add offset to skip any jitter (e.g., start at 525s instead of 524s).
 5. **Use official team/manufacturer videos for technical topics** - For power unit, engine, or technical regulation topics, use official team channels (Mercedes "Road to 2026", Honda PU Launch) or the official F1 channel's explainer videos. These have clean CGI animations and diagrams that work much better than on-track footage for technical concepts.
@@ -299,6 +413,56 @@ python3 src/fact_checker.py --project {name} --strict  # Exit non-zero if unveri
 }
 ```
 
+### Shorts Format (With Shot List)
+
+```json
+{
+  "title": "Video Title",
+  "duration_target": 60,
+  "segments": [
+    {
+      "id": 1,
+      "text": "Alpine switched from Renault engines despite backlash from Enstone to Mercedes for 2026 and looks quick.",
+      "context": "Alpine engine switch story",
+      "shots": [
+        {
+          "label": "Alpine on track with Renault PU",
+          "text_cue": "Alpine switched from Renault engines",
+          "source_type": "youtube_clip",
+          "footage_query": "Alpine A525 Renault engine 2025 F1",
+          "footage_start": 30,
+          "transition_in": "cut"
+        },
+        {
+          "label": "Enstone factory/protests",
+          "text_cue": "despite backlash from Enstone",
+          "source_type": "image",
+          "image_query": "Enstone F1 factory Alpine",
+          "ken_burns": "zoom_in",
+          "transition_in": "cross_dissolve"
+        },
+        {
+          "label": "Mercedes PU deal",
+          "text_cue": "to Mercedes for 2026",
+          "source_type": "youtube_clip",
+          "footage_query": "Mercedes F1 power unit 2026",
+          "footage_start": 15,
+          "transition_in": "wipe_left"
+        },
+        {
+          "label": "New Alpine car testing",
+          "text_cue": "and looks quick",
+          "source_type": "youtube_clip",
+          "footage_query": "Alpine 2026 testing fast lap",
+          "footage_start": 45,
+          "transition_in": "cut"
+        }
+      ]
+    }
+  ]
+}
+```
+
 ### Long-Form Format (With References)
 
 ```json
@@ -344,6 +508,58 @@ python3 src/fact_checker.py --project {name} --strict  # Exit non-zero if unveri
 - `color_grade`: Override auto-detected grade (`bw`, `vintage`, `cinematic`, `warm`, `cool`, `none`)
 - `music_mood`: Override music volume (`uplifting`, `atmospheric`, `default`)
 - `transition_sfx`: Override transition sound (`swoosh`, `fade`)
+- `shots`: Array of shot objects for multi-visual segments (see Shot List below)
+
+### Shot List (Multi-Visual Segments)
+
+Each segment can contain a `shots` array to break narration into multiple visual beats. If `shots` is absent, existing fields (`footage_query`, `footage`, `footage_start`) are treated as a single implicit shot -- zero changes needed for existing scripts.
+
+**Shot Fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `label` | string | yes | Human-readable shot description for storyboard review |
+| `text_cue` | string | yes | Exact substring of segment `text` this shot covers (used for proportional timing) |
+| `source_type` | enum | yes | `youtube_clip`, `image`, `quote_overlay`, `veo3_video`, `remotion_animation`, `graphic` |
+| `footage_query` | string | for youtube_clip | YouTube search query |
+| `footage_start` | int | no | Start timestamp in source video (seconds) |
+| `footage` | string | no | Downloaded filename. Convention: `segment_XX_shot_YY.mp4`. Set by downloader. |
+| `image_query` | string | for image | Stock image search query (Pexels/Unsplash) |
+| `ken_burns` | enum | no | `zoom_in`, `zoom_out`, `pan_left`, `pan_right`. Default: random. |
+| `transition_in` | enum | no | How to enter this shot. Default: `cut`. |
+| `transition_duration` | float | no | Override default transition duration (seconds) |
+| `color_grade` | enum | no | Per-shot: `bw`, `vintage`, `cinematic`, `warm`, `cool`, `none` |
+| `speaker_name` | string | for quote_overlay | Speaker name |
+| `quote_text` | string | for quote_overlay | Quote text |
+| `veo3_prompt` | string | for veo3_video | Veo3 generation prompt |
+| `animation_type` | string | for remotion_animation | Remotion component name |
+| `duration_weight` | float | no | Override proportional timing |
+
+**Available Transitions:**
+
+| Name | FFmpeg xfade | Default Duration | When to Use |
+|------|-------------|-----------------|-------------|
+| `cut` | (none) | 0s | Default. Most shot changes. |
+| `cross_dissolve` | `fade` | 0.4s | Between related shots, topic continuity |
+| `wipe_left` | `wipeleft` | 0.3s | Topic changes, forward progression |
+| `wipe_right` | `wiperight` | 0.3s | Flashbacks, reversals |
+| `whip_pan` | `smoothleft` | 0.2s | Fast-paced, energetic transitions |
+| `fade_to_black` | `fadeblack` | 0.3s | Section endings, dramatic pauses |
+| `slide_left` | `slideleft` | 0.3s | Comparisons, before/after |
+| `circle_open` | `circleopen` | 0.4s | Reveals, dramatic openings |
+| `circle_close` | `circleclose` | 0.4s | Scene endings, closings |
+
+**Timing:** Shot timing is proportional to `text_cue` character position within segment `text`. Speech rate is roughly proportional to character count, and the human eye tolerates +/- 0.5s of visual-audio misalignment. Minimum shot duration: 1.5s (shorts), 2.0s (long-form).
+
+**Footage naming:** Multi-shot footage uses `segment_XX_shot_YY.mp4` (or `.jpg` for images). The first shot (index 0) uses the legacy `segment_XX.mp4` name for backwards compatibility.
+
+**Guidelines:**
+- Aim for 2-4 shots per segment (shorts), 3-6 shots per segment (long-form)
+- Ensure `text_cue` values cover all of the segment's `text` without gaps
+- Use `cut` for most transitions; reserve dissolves/wipes for topic changes or dramatic moments
+- Use `image` source_type for less-known people, factory exteriors, or when no YouTube footage exists
+- Use `quote_overlay` when directly quoting a person
+- Use `veo3_video` or `remotion_animation` for abstract/scientific concepts
 
 ### Podcast Format
 
