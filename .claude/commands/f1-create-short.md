@@ -48,8 +48,9 @@ f1.ai/
 3. **Create Script**: Generate `script.json` with segments containing:
    - `text`: Voiceover text (keep each segment to 1-2 sentences; if text exceeds 8 wrapped lines, the assembler auto-splits into two timed parts at a natural break point, but shorter segments are always better for short-form)
    - `context`: Segment purpose
-   - `footage_query`: YouTube search query for relevant footage
+   - `footage_query`: YouTube search query (for single-shot segments)
    - `footage_start`: Timestamp in source video (verify with previews!)
+   - `shots`: (optional) Array of shots for multi-visual segments -- see Shot List section below
 
 4. **REVIEW CHECKPOINT**: Present the script to the user for review before proceeding:
    - Display the complete script with all segments
@@ -145,6 +146,79 @@ python3 src/preview_extractor.py --project {name}
 # Assemble final video
 python3 src/video_assembler.py --project {name}
 ```
+
+### Shot List (Multi-Visual Segments)
+
+For segments that mention multiple entities, topics, or people, break the visuals into a `shots` array. This creates immersive, fast-paced visuals where the screen changes to match what's being narrated.
+
+**When to create shots:**
+- Segment mentions 2+ different teams, drivers, or people
+- Segment covers a before/after or timeline
+- Segment includes a quote from someone (show their face, then the action)
+- Segment is longer than ~5 seconds
+
+**How to create shots:**
+1. Read the segment text -- identify distinct visual beats
+2. For each beat, create a shot with a `text_cue` (exact substring of the text)
+3. Choose the right `source_type`: `youtube_clip` for action, `image` for people/stills, `quote_overlay` for quotes
+4. Choose a `transition_in`: `cut` (default), `cross_dissolve` (smooth), `wipe_left` (topic change), `whip_pan` (energetic)
+5. Ensure text_cues cover all the text contiguously
+
+**Example:**
+```json
+{
+  "text": "Alpine switched from Renault engines despite backlash from Enstone to Mercedes for 2026 and looks quick.",
+  "context": "Alpine engine switch",
+  "shots": [
+    {
+      "label": "Alpine on track",
+      "text_cue": "Alpine switched from Renault engines",
+      "source_type": "youtube_clip",
+      "footage_query": "Alpine A525 Renault F1 2025",
+      "footage_start": 30,
+      "transition_in": "cut"
+    },
+    {
+      "label": "Enstone factory",
+      "text_cue": "despite backlash from Enstone",
+      "source_type": "image",
+      "image_query": "Enstone F1 factory Alpine",
+      "ken_burns": "zoom_in",
+      "transition_in": "cross_dissolve"
+    },
+    {
+      "label": "Mercedes power unit",
+      "text_cue": "to Mercedes for 2026",
+      "source_type": "youtube_clip",
+      "footage_query": "Mercedes F1 power unit 2026",
+      "footage_start": 15,
+      "transition_in": "wipe_left"
+    },
+    {
+      "label": "New Alpine testing",
+      "text_cue": "and looks quick.",
+      "source_type": "youtube_clip",
+      "footage_query": "Alpine 2026 Bahrain testing",
+      "footage_start": 45,
+      "transition_in": "cut"
+    }
+  ]
+}
+```
+
+**Footage download for multi-shot segments:**
+```bash
+# Downloads all shots automatically (images from Pexels, clips from YouTube)
+python3 src/footage_downloader.py --project {name}
+
+# Re-download a specific shot
+python3 src/footage_downloader.py --project {name} --segment 2 --shot 1 --query "new search"
+
+# Check per-shot download status
+python3 src/footage_downloader.py --project {name} --list
+```
+
+**Simple segments still work without shots** -- if a segment only needs one visual, just use `footage_query` as before.
 
 ### Video Features
 - **Blur-pad effect**: Full footage shown centered, blurred version as background (no cropping)

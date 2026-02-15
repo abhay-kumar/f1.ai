@@ -54,6 +54,17 @@ from src.config import (
     get_project_dir,
 )
 from src.intro_generator import create_intro_video
+from src.shot_assembler import (
+    MIN_SHOT_DURATION_LONGFORM,
+    TRANSITION_DEFAULTS,
+    TRANSITION_MAP,
+    calculate_shot_timings,
+    create_shot_clip,
+    stitch_shots_with_transitions,
+)
+from src.shot_assembler import (
+    normalize_segment as _normalize_segment,
+)
 
 # ============================================================================
 # CONFIGURATION
@@ -957,6 +968,138 @@ def process_video_clip(
 # ============================================================================
 
 
+def _create_multishot_longform_segment(
+    segment_idx: int,
+    segment: Dict,
+    audio_path: str,
+    audio_duration: float,
+    segment_work_dir: str,
+    output_path: str,
+    width: int,
+    height: int,
+) -> Tuple[bool, str, str]:
+    """Create a long-form segment from multiple shots with transitions.
+
+    Each shot is rendered as a separate clip based on its source_type,
+    then stitched together with specified transitions. Audio is added last.
+
+    Returns: (success, error_message, visual_type_used)
+    """
+    shots = segment["shots"]
+    footage_dir = os.path.join(
+        os.path.dirname(os.path.dirname(segment_work_dir.rstrip("/"))),
+        "footage",
+    )
+    footage_dir = os.path.normpath(footage_dir)
+
+    # Calculate timing for each shot from text_cue positions
+    shot_timings = calculate_shot_timings(
+        segment.get("text", ""), shots, audio_duration, MIN_SHOT_DURATION_LONGFORM
+    )
+
+    # Create each shot as a separate clip
+    shot_clips = []
+    successful_shots = []
+    successful_timings = []
+    visual_types_used = set()
+
+    for shot_idx, (shot, (start_time, end_time)) in enumerate(zip(shots, shot_timings)):
+        shot_duration = end_time - start_time
+        clip_path = os.path.join(segment_work_dir, f"shot_{shot_idx:02d}.mp4")
+
+        # Fill in missing footage field using naming convention
+        if not shot.get("footage"):
+            from shot_assembler import get_shot_source_ext, shot_footage_filename
+
+            ext = get_shot_source_ext(shot.get("source_type", "youtube_clip"))
+            convention_name = shot_footage_filename(segment_idx, shot_idx, ext)
+            convention_path = os.path.join(footage_dir, convention_name)
+            if os.path.exists(convention_path):
+                shot["footage"] = convention_name
+            # Fallback: segment-level footage (for single-shot normalized segments)
+            elif segment.get("footage") and os.path.exists(
+                os.path.join(footage_dir, segment["footage"])
+            ):
+                shot["footage"] = segment["footage"]
+
+        success = create_shot_clip(
+            shot=shot,
+            clip_path=clip_path,
+            duration=shot_duration,
+            footage_dir=footage_dir,
+            width=width,
+            height=height,
+            is_shorts=False,
+            gpu_encoder=GPU_ENCODER,
+            gpu_flags=GPU_ENCODER_FLAGS,
+        )
+
+        if success:
+            # Apply per-shot color grading if specified
+            color_grade = shot.get("color_grade")
+            if not color_grade:
+                color_grade = detect_color_grade(shot.get("label", ""), "", "")
+            if color_grade and color_grade != "none":
+                graded_path = clip_path.replace(".mp4", "_graded.mp4")
+                if apply_color_grade(clip_path, graded_path, color_grade):
+                    os.replace(graded_path, clip_path)
+
+            shot_clips.append(clip_path)
+            successful_shots.append(shot)
+            successful_timings.append((start_time, end_time))
+            visual_types_used.add(shot.get("source_type", "youtube_clip"))
+        else:
+            print(
+                f"      Shot {shot_idx} failed ({shot.get('label', 'unknown')}), skipping"
+            )
+
+    if not shot_clips:
+        return False, "No shot clips created", ""
+
+    # Stitch shots together
+    if len(shot_clips) == 1:
+        stitched_path = shot_clips[0]
+    else:
+        stitched_path = os.path.join(segment_work_dir, "stitched.mp4")
+        success = stitch_shots_with_transitions(
+            clip_paths=shot_clips,
+            shots=successful_shots,
+            shot_timings=successful_timings,
+            output_path=stitched_path,
+            gpu_encoder=GPU_ENCODER,
+            gpu_flags=GPU_ENCODER_FLAGS,
+        )
+        if not success:
+            return False, "Failed to stitch shots", ""
+
+    # Add audio
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        stitched_path,
+        "-i",
+        audio_path,
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-b:a",
+        LONGFORM_AUDIO_BITRATE,
+        "-t",
+        str(audio_duration),
+        "-shortest",
+        output_path,
+    ]
+    subprocess.run(cmd, capture_output=True, text=True)
+
+    if os.path.exists(output_path):
+        vt = "+".join(sorted(visual_types_used)) if visual_types_used else "multi_shot"
+        return True, "", vt
+
+    return False, "Failed to add audio to multi-shot segment", ""
+
+
 def create_segment_video(
     segment_idx: int,
     segment: Dict,
@@ -972,6 +1115,11 @@ def create_segment_video(
     Create a segment video by intelligently blending visual sources.
     YouTube-first: tries YouTube clips, falls back to F1 images.
 
+    Supports multi-shot segments: if the segment has a 'shots' array with
+    more than one shot, each shot is rendered individually and stitched with
+    specified transitions. This replaces the mechanical 3-5 second clip splitting
+    with content-driven visual changes.
+
     Returns: (success, error_message, visual_type_used)
     """
     audio_duration = get_duration(audio_path)
@@ -981,7 +1129,24 @@ def create_segment_video(
     segment_work_dir = os.path.join(work_dir, f"segment_{segment_idx:02d}")
     os.makedirs(segment_work_dir, exist_ok=True)
 
-    # Get visual routing decision
+    # Multi-shot path: content-driven visual changes
+    has_shots = "shots" in segment and len(segment.get("shots", [])) > 1
+    if has_shots:
+        result = _create_multishot_longform_segment(
+            segment_idx,
+            segment,
+            audio_path,
+            audio_duration,
+            segment_work_dir,
+            output_path,
+            width,
+            height,
+        )
+        if result[0]:
+            return result
+        print(f"      Multi-shot failed, falling back to auto-routing...")
+
+    # Get visual routing decision (single-shot / legacy path)
     decision = route_visual(segment, use_veo3=use_veo3)
     visual_type_used = decision.primary_type.value
 

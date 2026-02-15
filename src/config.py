@@ -111,6 +111,24 @@ F1_TEAM_COLORS = {
 F1_DEFAULT_COLOR = "#FFFFFF"
 
 # ============================================================================
+# SHOT LIST CONFIG (multi-visual segments)
+# ============================================================================
+
+# Minimum shot duration (seconds) - prevents jarring micro-cuts
+MIN_SHOT_DURATION = 1.5  # For shorts (fast-paced)
+MIN_SHOT_DURATION_LONGFORM = 2.0  # For long-form (slower pacing)
+
+# Valid source types for shots
+SHOT_SOURCE_TYPES = [
+    "youtube_clip",
+    "image",
+    "quote_overlay",
+    "veo3_video",
+    "remotion_animation",
+    "graphic",
+]
+
+# ============================================================================
 # VISUAL TYPES CONFIG
 # ============================================================================
 
@@ -153,6 +171,22 @@ VALIDATION_THRESHOLDS = {
     "text": 0.3,  # Max text score (0-1), above = reject
     "clip": 0.4,  # Min CLIP score (0-1), below = reject (if enabled)
 }
+
+# ============================================================================
+# GEMINI VISION VALIDATION CONFIG
+# ============================================================================
+
+GEMINI_VISION_MODEL = "gemini-2.0-flash"  # Free tier, vision-capable
+GEMINI_VISION_RPM = 15  # Requests per minute (free tier)
+VALIDATION_MAX_CANDIDATES = 5  # Max candidates to try before giving up
+VALIDATION_CONFIDENCE_THRESHOLD = 0.6  # Minimum match confidence to accept
+
+# ============================================================================
+# GOOGLE SEARCH CONFIG
+# ============================================================================
+
+GOOGLE_SEARCH_DELAY = 2.0  # Seconds between Google requests (rate limit)
+GOOGLE_SEARCH_CACHE_TTL = 3600  # Cache search results for 1 hour
 
 # Official F1 channels (prioritized in search)
 OFFICIAL_F1_CHANNELS = [

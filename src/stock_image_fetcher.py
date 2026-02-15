@@ -12,28 +12,38 @@ Features:
 - Local caching to avoid re-downloads
 - Multiple images per segment for variety
 """
+
+import hashlib
+import json
 import os
 import sys
-import json
-import hashlib
-import urllib.request
 import urllib.parse
-from typing import Tuple, Optional, List, Dict
+import urllib.request
 from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Cache directory for downloaded images
-CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cache", "stock_images")
+CACHE_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cache", "stock_images"
+)
+
 
 # API Keys - loaded from shared/creds
 def get_api_key(name: str) -> Optional[str]:
     """Load API key from shared/creds folder."""
-    creds_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "shared", "creds", name)
+    creds_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "shared",
+        "creds",
+        name,
+    )
     if os.path.exists(creds_path):
         with open(creds_path) as f:
             return f.read().strip()
     return os.environ.get(f"{name.upper()}_API_KEY")
+
 
 # Search query enhancers for F1 content
 F1_QUERY_MAPPINGS = {
@@ -93,7 +103,15 @@ def enhance_query(query: str) -> str:
     query = query.replace("GRAPHIC:", "").replace("graphic:", "").strip()
 
     # Remove overly specific terms
-    remove_terms = ["2026", "2025", "2024", "explained", "analysis", "overview", "diagram"]
+    remove_terms = [
+        "2026",
+        "2025",
+        "2024",
+        "explained",
+        "analysis",
+        "overview",
+        "diagram",
+    ]
     for term in remove_terms:
         query = query.replace(term, "").strip()
 
@@ -119,10 +137,13 @@ def search_pexels(query: str, per_page: int = 5) -> List[Dict]:
 
     try:
         url = f"https://api.pexels.com/v1/search?query={urllib.parse.quote(query)}&per_page={per_page}&orientation=landscape"
-        req = urllib.request.Request(url, headers={
-            "Authorization": api_key,
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-        })
+        req = urllib.request.Request(
+            url,
+            headers={
+                "Authorization": api_key,
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            },
+        )
 
         with urllib.request.urlopen(req, timeout=15) as response:
             data = json.loads(response.read().decode())
@@ -130,14 +151,16 @@ def search_pexels(query: str, per_page: int = 5) -> List[Dict]:
         results = []
         for photo in data.get("photos", []):
             # Get large2x for high quality (1880px width typically)
-            results.append({
-                "url": photo["src"]["large2x"],
-                "photographer": photo["photographer"],
-                "width": photo["width"],
-                "height": photo["height"],
-                "source": "pexels",
-                "id": photo["id"]
-            })
+            results.append(
+                {
+                    "url": photo["src"]["large2x"],
+                    "photographer": photo["photographer"],
+                    "width": photo["width"],
+                    "height": photo["height"],
+                    "source": "pexels",
+                    "id": photo["id"],
+                }
+            )
 
         return results
 
@@ -158,7 +181,9 @@ def search_unsplash(query: str, per_page: int = 5) -> List[Dict]:
 
     try:
         url = f"https://api.unsplash.com/search/photos?query={urllib.parse.quote(query)}&per_page={per_page}&orientation=landscape"
-        req = urllib.request.Request(url, headers={"Authorization": f"Client-ID {api_key}"})
+        req = urllib.request.Request(
+            url, headers={"Authorization": f"Client-ID {api_key}"}
+        )
 
         with urllib.request.urlopen(req, timeout=15) as response:
             data = json.loads(response.read().decode())
@@ -166,14 +191,16 @@ def search_unsplash(query: str, per_page: int = 5) -> List[Dict]:
         results = []
         for photo in data.get("results", []):
             # Get regular size (1080px width)
-            results.append({
-                "url": photo["urls"]["regular"],
-                "photographer": photo["user"]["name"],
-                "width": photo["width"],
-                "height": photo["height"],
-                "source": "unsplash",
-                "id": photo["id"]
-            })
+            results.append(
+                {
+                    "url": photo["urls"]["regular"],
+                    "photographer": photo["user"]["name"],
+                    "width": photo["width"],
+                    "height": photo["height"],
+                    "source": "unsplash",
+                    "id": photo["id"],
+                }
+            )
 
         return results
 
@@ -191,7 +218,7 @@ def download_image(url: str, output_path: str) -> bool:
         req = urllib.request.Request(url, headers=headers)
 
         with urllib.request.urlopen(req, timeout=30) as response:
-            with open(output_path, 'wb') as f:
+            with open(output_path, "wb") as f:
                 f.write(response.read())
 
         return os.path.exists(output_path) and os.path.getsize(output_path) > 1000
@@ -201,7 +228,9 @@ def download_image(url: str, output_path: str) -> bool:
         return False
 
 
-def fetch_stock_image(query: str, output_path: str, use_cache: bool = True) -> Tuple[bool, Optional[str], Optional[str]]:
+def fetch_stock_image(
+    query: str, output_path: str, use_cache: bool = True
+) -> Tuple[bool, Optional[str], Optional[str]]:
     """
     Fetch a stock image for the given query.
 
@@ -218,6 +247,7 @@ def fetch_stock_image(query: str, output_path: str, use_cache: bool = True) -> T
     if use_cache and os.path.exists(cache_path):
         # Copy from cache
         import shutil
+
         shutil.copy(cache_path, output_path)
         return True, output_path, "Cached image"
 
@@ -251,16 +281,21 @@ def fetch_stock_image(query: str, output_path: str, use_cache: bool = True) -> T
         # Cache the image
         if use_cache:
             import shutil
+
             os.makedirs(os.path.dirname(cache_path), exist_ok=True)
             shutil.copy(output_path, cache_path)
 
-        attribution = f"Photo by {image_info['photographer']} ({image_info['source'].title()})"
+        attribution = (
+            f"Photo by {image_info['photographer']} ({image_info['source'].title()})"
+        )
         return True, output_path, attribution
 
     return False, None, "Download failed"
 
 
-def fetch_multiple_images(query: str, output_dir: str, count: int = 3) -> List[Tuple[str, str]]:
+def fetch_multiple_images(
+    query: str, output_dir: str, count: int = 3
+) -> List[Tuple[str, str]]:
     """
     Fetch multiple images for a query (for variety/transitions).
 
@@ -290,27 +325,40 @@ PERSON_IMAGES = {
     "toto wolff": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4b/Toto_Wolff_2018.jpg/440px-Toto_Wolff_2018.jpg",
     "fred vasseur": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0b/Fred_Vasseur_2023.jpg/440px-Fred_Vasseur_2023.jpg",
     "andrea stella": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/73/Andrea_Stella_2023.jpg/440px-Andrea_Stella_2023.jpg",
-
     # F1 Drivers
     "lewis hamilton": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/18/Lewis_Hamilton_2016_Malaysia_2.jpg/440px-Lewis_Hamilton_2016_Malaysia_2.jpg",
     "max verstappen": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7e/Max_Verstappen_2017_Malaysia_3.jpg/440px-Max_Verstappen_2017_Malaysia_3.jpg",
     "charles leclerc": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c6/Charles_Leclerc_2018.jpg/440px-Charles_Leclerc_2018.jpg",
     "lando norris": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4b/Lando_Norris_2019.jpg/440px-Lando_Norris_2019.jpg",
-
+    # F1 Team Principals (additional)
+    "mike krack": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a5/Mike_Krack_2022.jpg/440px-Mike_Krack_2022.jpg",
+    "james vowles": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8f/James_Vowles_2023.jpg/440px-James_Vowles_2023.jpg",
+    "ayao komatsu": "generic_executive",
+    "laurent mekies": "generic_executive",
+    # F1 Drivers (additional)
+    "fernando alonso": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Fernando_Alonso_2016_Malaysia_2.jpg/440px-Fernando_Alonso_2016_Malaysia_2.jpg",
+    "romain grosjean": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cb/Romain_Grosjean_2019.jpg/440px-Romain_Grosjean_2019.jpg",
+    "heinz-harald frentzen": "https://upload.wikimedia.org/wikipedia/commons/thumb/5/50/Heinz-Harald_Frentzen_2006.jpg/440px-Heinz-Harald_Frentzen_2006.jpg",
     # F1 Technical/Officials
     "pat symonds": "generic_executive",
     "stefano domenicali": "generic_executive",
     "mohammed ben sulayem": "generic_executive",
-
+    "pierre waché": "generic_executive",
+    "sultan bin sulayem": "generic_executive",
+    "pierre wache": "generic_executive",
     # Company executives
     "toshihiro mibe": "generic_executive",
     "pierre-olivier calendini": "generic_executive",
 }
 
 
-def get_person_image(name: str, output_path: str) -> Tuple[bool, Optional[str]]:
+def get_person_image(
+    name: str, output_path: str, use_google: bool = True
+) -> Tuple[bool, Optional[str]]:
     """
     Get image of a person for quote overlays.
+
+    Priority: PERSON_IMAGES dict -> Google Images -> Pexels -> silhouette
 
     Returns (success, image_path)
     """
@@ -321,15 +369,55 @@ def get_person_image(name: str, output_path: str) -> Tuple[bool, Optional[str]]:
         url = PERSON_IMAGES[name_lower]
 
         if url == "generic_executive":
-            # Use a generic business person silhouette
-            return fetch_stock_image("business executive portrait silhouette", output_path, use_cache=True)[:2]
+            # Try Google Images first for generic executives
+            if use_google:
+                try:
+                    from src.google_image_search import (
+                        download_image_url,
+                        search_google_images,
+                    )
+
+                    results = search_google_images(
+                        f"{name} portrait photo", max_results=3
+                    )
+                    for r in results:
+                        success, err = download_image_url(r["url"], output_path)
+                        if success and os.path.getsize(output_path) > 5000:
+                            return True, output_path
+                except Exception:
+                    pass
+
+            # Fallback to stock photo silhouette
+            return fetch_stock_image(
+                "business executive portrait silhouette",
+                output_path,
+                use_cache=True,
+            )[:2]
 
         # Download the Wikipedia image
         if download_image(url, output_path):
             return True, output_path
 
-    # Fallback: search for the person
-    success, path, _ = fetch_stock_image(f"{name} portrait", output_path, use_cache=True)
+    # Try Google Images for people not in the dict
+    if use_google:
+        try:
+            from src.google_image_search import (
+                download_image_url,
+                search_google_images,
+            )
+
+            results = search_google_images(f"{name} portrait photo", max_results=3)
+            for r in results:
+                success, err = download_image_url(r["url"], output_path)
+                if success and os.path.getsize(output_path) > 5000:
+                    return True, output_path
+        except Exception:
+            pass
+
+    # Fallback: search Pexels for the person
+    success, path, _ = fetch_stock_image(
+        f"{name} portrait", output_path, use_cache=True
+    )
     if success:
         return True, path
 
@@ -341,11 +429,13 @@ def main():
     """CLI for testing stock image fetching."""
     import argparse
 
-    parser = argparse.ArgumentParser(description='Fetch stock images for video segments')
-    parser.add_argument('--query', help='Search query')
-    parser.add_argument('--output', default='test_image.jpg', help='Output path')
-    parser.add_argument('--person', help='Get person image for quote')
-    parser.add_argument('--test', action='store_true', help='Test API connectivity')
+    parser = argparse.ArgumentParser(
+        description="Fetch stock images for video segments"
+    )
+    parser.add_argument("--query", help="Search query")
+    parser.add_argument("--output", default="test_image.jpg", help="Output path")
+    parser.add_argument("--person", help="Get person image for quote")
+    parser.add_argument("--test", action="store_true", help="Test API connectivity")
     args = parser.parse_args()
 
     if args.test:

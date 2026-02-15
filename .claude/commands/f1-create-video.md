@@ -191,6 +191,62 @@ This approach is used by many successful informative YouTube channels and provid
 | `quote` | Direct quotes | Auto-detected | Quote card with speaker photo |
 | `graphic` | AI-generated diagrams | `graphic_description` | DALL-E generated (if credits available) |
 
+### Shot List (Multi-Visual Segments)
+
+For long-form content, use the `shots` array to control what appears on screen at each moment during narration. Long-form segments are typically 20-30 seconds, so they benefit from 3-6 shots per segment.
+
+**Shot source types for long-form:**
+- `youtube_clip`: On-track action, races, overtakes, celebrations (primary)
+- `image`: People, historical moments, technical details, team personnel (stock photos with Ken Burns)
+- `quote_overlay`: Speaker image + quote text (auto-detected or explicit)
+- `veo3_video`: Abstract concepts without specific F1 imagery (fuel chemistry, wind tunnels)
+- `remotion_animation`: Technical explainers (engine diagrams, aero comparisons) -- requires pre-rendering
+- `graphic`: AI-generated diagrams (DALL-E)
+
+**Transition preferences for long-form:**
+- `cross_dissolve` (0.5s): Default between related shots -- smooth, cinematic
+- `wipe_left` (0.3s): Topic changes, forward progression
+- `fade_to_black` (0.3s): Section transitions (intro -> main, act changes)
+- `cut`: Fast-paced action sequences, urgent moments
+- `whip_pan` (0.2s): Energetic transitions, comparisons
+
+**Example (historical narrative segment):**
+```json
+{
+  "id": 5,
+  "section": "rising_action",
+  "text": "But Mercedes saw an opportunity. Their engine division in Brixworth had been working on a radical new architecture for three years. When Alpine came calling, they were ready.",
+  "context": "Mercedes PU development backstory",
+  "shots": [
+    {
+      "label": "Mercedes factory exterior",
+      "text_cue": "But Mercedes saw an opportunity. Their engine division in Brixworth",
+      "source_type": "image",
+      "image_query": "Mercedes F1 Brixworth factory engine",
+      "ken_burns": "zoom_out",
+      "transition_in": "fade_to_black"
+    },
+    {
+      "label": "Engine assembly CGI",
+      "text_cue": "had been working on a radical new architecture for three years.",
+      "source_type": "youtube_clip",
+      "footage_query": "Mercedes F1 power unit 2026 development",
+      "footage_start": 20,
+      "transition_in": "cross_dissolve"
+    },
+    {
+      "label": "Alpine-Mercedes handshake/deal",
+      "text_cue": "When Alpine came calling, they were ready.",
+      "source_type": "youtube_clip",
+      "footage_query": "Alpine Mercedes partnership announcement F1",
+      "footage_start": 5,
+      "transition_in": "wipe_left",
+      "color_grade": "cinematic"
+    }
+  ]
+}
+```
+
 ### Ken Burns Effects
 
 The assembler automatically applies varied Ken Burns effects:
