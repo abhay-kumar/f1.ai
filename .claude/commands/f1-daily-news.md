@@ -20,7 +20,15 @@ This will:
 
 After reviewing the ideas from `/f1-find-content day`:
 
-1. **CHECKPOINT - User Selection**: 
+1. **Filter Out Previously Reported Stories**: Before presenting the list to the user, cross-reference every discovered story against `shared/reddit_ideas.json`:
+   - Remove any story that matches an existing entry with `"status": "used"` (same topic, team, person, or event — match semantically, not just by exact ID)
+   - Also remove stories that are minor updates to previously used stories (e.g., if "Aston Martin 4 seconds off" was used yesterday, "Aston Martin still 4 seconds off" is not fresh news)
+   - Only present **genuinely fresh stories** that have NOT been covered in any previous daily news episode
+   - If a story is a significant escalation or new development of a previously covered topic, it IS fresh (e.g., "Skinner resigns" is fresh even if "Red Bull staff purge" was covered before)
+
+2. **CHECKPOINT - User Selection**: 
+   - Present ONLY the fresh, unreported stories to the user
+   - Clearly label how many stories were filtered out (e.g., "Filtered out 4 previously reported stories")
    - Ask user which stories to include (by number or ID)
    - Recommend 6-8 stories for a ~60-90 second video
    - Wait for explicit confirmation before proceeding
@@ -115,7 +123,7 @@ These assets should be copied to each new project's footage folder to avoid redu
 
 ### Phase 3: Video Production
 
-**Follow the `/f1-create-short` pipeline from step 5 (Download Footage) through step 13 (Verify Final Output)**, with these daily-news-specific overrides:
+**Follow the `/f1-create-short` pipeline from step 5 (Download Footage) through step 14 (Verify Final Output)**, with these daily-news-specific overrides:
 
 1. **Before downloading footage**, copy shared intro/outro assets:
    ```bash
@@ -127,6 +135,12 @@ These assets should be copied to each new project's footage folder to avoid redu
 2. **Set `footage` field** for ALL segments in script.json at creation time (e.g., `"footage": "segment_00.mp4"`). Pre-copied assets (intro/outro) especially need this since the footage_downloader only adds it for segments it downloads.
 
 3. **Duration target is fixed** at 60-90 seconds (not user-chosen like in general shorts).
+
+5. **Always use `--segment-transition cut` when assembling**:
+   ```bash
+   python3 src/video_assembler.py --project f1-daily-news-{date} --segment-transition cut
+   ```
+   The default `cross_dissolve` transition causes progressive audio-video drift: each 0.3s xfade overlap shortens the video track but not the audio, so by segment 7-8 the voiceover is ~2 seconds ahead of the visuals. Hard cuts eliminate this drift and better suit the punchy news format.
 
 4. **Shot list examples for daily news** -- when using multi-shot segments, common patterns include:
 

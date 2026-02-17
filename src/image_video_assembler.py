@@ -987,7 +987,7 @@ def _create_multishot_longform_segment(
     """
     shots = segment["shots"]
     footage_dir = os.path.join(
-        os.path.dirname(os.path.dirname(segment_work_dir.rstrip("/"))),
+        os.path.dirname(os.path.dirname(os.path.dirname(segment_work_dir.rstrip("/")))),
         "footage",
     )
     footage_dir = os.path.normpath(footage_dir)
@@ -1038,7 +1038,7 @@ def _create_multishot_longform_segment(
             # Apply per-shot color grading if specified
             color_grade = shot.get("color_grade")
             if not color_grade:
-                color_grade = detect_color_grade(shot.get("label", ""), "", "")
+                color_grade = detect_color_grade(shot)
             if color_grade and color_grade != "none":
                 graded_path = clip_path.replace(".mp4", "_graded.mp4")
                 if apply_color_grade(clip_path, graded_path, color_grade):
@@ -1088,7 +1088,6 @@ def _create_multishot_longform_segment(
         LONGFORM_AUDIO_BITRATE,
         "-t",
         str(audio_duration),
-        "-shortest",
         output_path,
     ]
     subprocess.run(cmd, capture_output=True, text=True)
@@ -1973,6 +1972,10 @@ def main():
         *gpu_enc_args(),
         "-c:a",
         "aac",
+        "-ar",
+        "44100",
+        "-ac",
+        "1",
         "-b:a",
         LONGFORM_AUDIO_BITRATE,
         concat_output,

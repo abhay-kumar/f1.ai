@@ -532,27 +532,52 @@ Mix visual types to maintain viewer engagement:
    python3 src/audio_generator.py --project {name}
    ```
 
-7. **Assemble Video (Stock Images)**:
-   Long-form videos use the image-based assembler which automatically:
-   - Fetches stock images from Pexels/Unsplash based on segment content
-   - Applies Ken Burns effects (zoom/pan) for professional motion
-   - Detects quotes and creates quote overlays with speaker images
-   - Generates fade transitions between segments
+7. **Download Footage & Images**: Download all footage and images required by the script's shot lists.
+   The multi-shot assembler expects pre-downloaded footage in `footage/` — it does NOT download on-the-fly.
+   **This step is REQUIRED when the script uses `shots` arrays with `source_type: "youtube_clip"` or `"image"`.**
 
    ```bash
-   # Assemble using stock images (recommended for long-form)
+   # Download all shots (YouTube clips + stock images)
+   python3 src/footage_downloader.py --project {name}
+
+   # With Google-powered search for better accuracy (slower)
+   python3 src/footage_downloader.py --project {name} --google-search
+
+   # With Gemini vision validation (slowest, most accurate)
+   python3 src/footage_downloader.py --project {name} --google-search --validate
+
+   # Check download status
+   python3 src/footage_downloader.py --project {name} --list
+   ```
+
+   After downloading, verify all shots are present with `--list`. Re-download any failed shots with:
+   ```bash
+   python3 src/footage_downloader.py --project {name} --segment N --shot M --query "alternative search terms"
+   ```
+
+8. **Assemble Video**:
+   The assembler uses downloaded footage for multi-shot segments, with stock images as fallback:
+   - Multi-shot segments: Uses YouTube clips and images from `footage/` with transitions
+   - Fallback (if footage missing): Fetches stock images from Pexels/Unsplash with Ken Burns effects
+   - Detects quotes and creates quote overlays with speaker images
+   - Applies color grading, transition SFX, and animated intro
+
+   ```bash
+   # Assemble video (4K default)
    python3 src/image_video_assembler.py --project {name}
 
    # Options:
    python3 src/image_video_assembler.py --project {name} --resolution hd  # Faster, 1080p
-   python3 src/image_video_assembler.py --project {name} --effect zoom_in  # Force specific effect
+   python3 src/image_video_assembler.py --project {name} --no-music       # Skip background music
+   python3 src/image_video_assembler.py --project {name} --analyze        # Preview visual routing (dry run)
    ```
 
-   **Note**: Requires Pexels API key in `shared/creds/pexels` (free tier available)
+   **Note**: Requires Pexels API key in `shared/creds/pexels` for fallback images (free tier available)
 
-8. **Quality Check**:
+9. **Quality Check**:
     - Video/audio sync throughout
-    - Ken Burns effects look smooth
+    - Downloaded footage matches narration content
+    - Transitions between shots are smooth
     - Quote overlays display correctly
     - Pacing feels right
     - End credits display properly
@@ -636,7 +661,11 @@ python3 src/fact_checker.py --project {name} --validate-refs
 # Generate audio (cached)
 python3 src/audio_generator.py --project {name}
 
-# Assemble video using stock images (RECOMMENDED for long-form)
+# Download footage (REQUIRED before assembly for multi-shot scripts)
+python3 src/footage_downloader.py --project {name}
+python3 src/footage_downloader.py --project {name} --google-search --validate  # Better accuracy
+
+# Assemble video (uses downloaded footage from multi-shot scripts)
 python3 src/image_video_assembler.py --project {name}
 
 # Assemble in HD (faster, smaller file)
@@ -655,13 +684,14 @@ python3 src/youtube_uploader_longform.py --project {name} --dry-run
 python3 src/youtube_uploader_longform.py --project {name}
 ```
 
-### Alternative: Footage-Based Assembly (for shorts or special cases)
+### Alternative: Footage-Based Assembly
 
 ```bash
-# Download YouTube footage (for /create-short only)
+# Download YouTube footage (required before assembly when using multi-shot scripts)
 python3 src/footage_downloader.py --project {name}
+python3 src/footage_downloader.py --project {name} --google-search --validate  # Better accuracy
 
-# Footage-based assembly (used by shorts)
+# Footage-based assembly (legacy single-shot approach)
 python3 src/video_assembler_longform.py --project {name}
 ```
 
