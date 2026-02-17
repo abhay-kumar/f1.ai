@@ -60,7 +60,7 @@ f1.ai/
    - Only continue to step 5 after **explicit user approval**
    - Aim to get approval in ONE round by gathering all requirements in step 1
 
-5. **Download Footage**: Use yt-dlp to find and download clips
+5. **Download Footage**: Use yt-dlp to find and download clips. Use `--google-search --validate` flags for higher accuracy.
 6. **Verify Footage via `--list`**: CRITICAL - After downloading, run `--list` to check the actual YouTube video titles match the intended content. Fan channels often have screen recordings or wrong content.
 7. **Fix Mismatched Footage**: If a title doesn't match:
    - Prefer official F1 channel footage over fan channels
@@ -76,20 +76,45 @@ f1.ai/
    - Timestamp shows the actual moment needed
    - Update `footage_start` based on visual verification
 
-10. **Generate Audio**: Use Gemini TTS with Alnilam voice (caches to avoid re-generation)
-11. **Assemble Video**: Run video assembler with:
+10. **Validate Footage Against Script (MANDATORY)**: After previews are extracted, run Gemini vision validation on ALL footage to verify it matches the script content:
+    ```bash
+    python3 src/gemini_vision_validator.py --project {name}
+    ```
+    This validates each footage file/image against its expected content from the script.
+    
+    **Acceptance criteria:**
+    - Every segment must have **high confidence** validation (pass or high-confidence match)
+    - If any segment fails validation, investigate and fix BEFORE proceeding:
+      1. Check the preview frames visually — is the content actually wrong, or was validation overly strict?
+      2. If content is wrong: re-download with a better query (`--segment N --query "better search"`) or a specific URL
+      3. If content is borderline: adjust `footage_start` to a better timestamp and re-validate
+      4. Re-run validation after fixes until all segments pass
+    - **Do NOT proceed to audio generation or assembly until all footage is validated**
+    - For image shots (photos of people), validate that the correct person is shown
+    - For video shots, validate at the `footage_start` timestamp that the correct team/car/scene is visible
+    
+    **Quick single-file validation:**
+    ```bash
+    # Validate a specific file
+    python3 src/gemini_vision_validator.py --file footage/segment_XX.mp4 --expected "Red Bull RB22 on track" --query "Red Bull F1 2026"
+    ```
+    
+    **Present validation results to the user** as a summary table showing each segment's pass/fail status before continuing.
+
+11. **Generate Audio**: Use Gemini TTS with Alnilam voice (caches to avoid re-generation)
+12. **Assemble Video**: Run video assembler with:
     - Consistent 30fps (avoids timestamp issues)
     - Blur-pad effect (no cropping)
     - Background music mixed at 15%
     - GPU encoding (VideoToolbox)
 
-12. **USER REVIEW CHECKPOINT (MANDATORY)**: Present the output video to the user for review BEFORE uploading:
+13. **USER REVIEW CHECKPOINT (MANDATORY)**: Present the output video to the user for review BEFORE uploading:
     - Tell the user to review `projects/{name}/output/final.mp4`
     - **STOP and wait for user confirmation** that the video looks good
     - Fix any issues (footage swaps, sync problems) before uploading
     - **NEVER upload without explicit user approval of the final video**
 
-13. **Verify Final Output**: Check that:
+14. **Verify Final Output**: Check that:
     - Video and audio durations match
     - Video plays correctly throughout
     - Content syncs with narration
@@ -107,6 +132,14 @@ f1.ai/
 9. **Check video/audio stream durations** - They must match in final output
 10. **Clear audio cache when script structure changes** - If you merge, remove, or reorder segments, the cached audio files will have wrong text for the new segment numbering. Always `rm audio/*.mp3` and regenerate fresh when the script structure (number of segments or their order) changes. Only reuse cache when making footage-only changes.
 11. **YouTube Shorts max is 3 minutes** (since Oct 2024) - but aim for 2:30-2:40 to avoid edge cases. Videos at exactly 180s may not classify as Shorts.
+12. **Cross-dissolve between segments causes audio-video drift** - The default `--segment-transition cross_dissolve` shortens the video track by 0.3s per segment boundary (xfade overlap) but the audio is concatenated at full length. With 8 segments this creates ~2.1s of cumulative drift — the voiceover progressively gets ahead of the visuals. Use `--segment-transition cut` for news-style or fast-paced shorts. Only use `cross_dissolve` for slower, cinematic shorts with 3-4 segments where the drift is negligible.
+13. **Footage validator checks thumbnails, not footage_start frames** - `gemini_vision_validator.py --project` validates YouTube thumbnails, which may not represent content at the `footage_start` timestamp. When validation fails but you suspect the content is correct at the right timestamp, extract a frame at the actual timestamp and validate individually:
+    ```bash
+    ffmpeg -y -ss {footage_start} -i footage/segment_XX.mp4 -vframes 1 -q:v 2 /tmp/check.jpg
+    python3 src/gemini_vision_validator.py --file /tmp/check.jpg --expected "description" --query "search terms"
+    ```
+14. **yt-dlp keyword search often returns wrong teams** - `ytsearch1:` frequently returns completely wrong content (e.g., McLaren when Red Bull was requested). When accuracy matters: (1) use `--google-search` flag for better results, (2) search for specific YouTube URLs from official channels, (3) download broad compilation videos and use subtitle search to find the right timestamp.
+15. **yt-dlp can hang indefinitely** - Some downloads stall forever. Use `--socket-timeout 20` when downloading via direct yt-dlp commands. If the Python downloader hangs, fall back to `bash src/download_footage.sh {name}` which runs each download in an isolated subprocess.
 
 ### API Keys Location
 - Gemini: `shared/creds/google_ai` (free at https://aistudio.google.com/apikey)

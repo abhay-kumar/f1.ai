@@ -1094,7 +1094,9 @@ def main():
         ]
         subprocess.run(cmd, capture_output=True)
     else:
-        # Transitions between segments using xfade + acrossfade
+        # Transitions between segments using xfade for VIDEO only.
+        # Audio is concatenated separately without any crossfade or trimming
+        # to preserve complete speech at segment boundaries.
         ffmpeg_transition = {
             "cross_dissolve": "fade",
             "fade_to_black": "fadeblack",
@@ -1108,14 +1110,38 @@ def main():
         for sv in segment_videos:
             seg_durations.append(get_video_stream_duration(sv))
 
-        # Build xfade filter chain
+        # Step 1: Concat all audio tracks untouched (preserves full speech)
+        audio_concat_file = f"{temp_dir}/audio_concat.txt"
+        audio_concat_path = f"{temp_dir}/audio_full.m4a"
+        with open(audio_concat_file, "w") as f:
+            for sv in segment_videos:
+                f.write(f"file '{sv}'\n")
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                audio_concat_file,
+                "-vn",
+                "-c:a",
+                "aac",
+                "-b:a",
+                AUDIO_BITRATE,
+                audio_concat_path,
+            ],
+            capture_output=True,
+        )
+
+        # Step 2: Apply xfade to VIDEO streams only
         inputs = []
         for sv in segment_videos:
             inputs.extend(["-i", sv])
 
-        # Video xfade chain
         v_filters = []
-        a_filters = []
         current_offset = seg_durations[0] - transition_dur
 
         for i in range(1, len(segment_videos)):
@@ -1126,18 +1152,14 @@ def main():
                 f":duration={transition_dur}:offset={current_offset:.3f}{out_v}"
             )
 
-            in_a = f"[a{i - 1}]" if i > 1 else "[0:a]"
-            out_a = f"[a{i}]"
-            a_filters.append(
-                f"{in_a}[{i}:a]acrossfade=d={transition_dur}:c1=tri:c2=tri{out_a}"
-            )
-
             if i < len(segment_videos) - 1:
                 current_offset += seg_durations[i] - transition_dur
 
-        last_idx = len(segment_videos) - 1
-        filter_complex = ";".join(v_filters + a_filters)
+        last_v_idx = len(segment_videos) - 1
+        filter_complex = ";".join(v_filters)
 
+        # Render video-only with xfade
+        video_only_path = f"{temp_dir}/video_xfade.mp4"
         cmd = [
             "ffmpeg",
             "-y",
@@ -1145,22 +1167,37 @@ def main():
             "-filter_complex",
             filter_complex,
             "-map",
-            f"[v{last_idx}]",
-            "-map",
-            f"[a{last_idx}]",
+            f"[v{last_v_idx}]",
+            "-an",
             "-c:v",
             "h264_videotoolbox",
             "-b:v",
             VIDEO_BITRATE,
-            "-c:a",
-            "aac",
-            "-b:a",
-            AUDIO_BITRATE,
             "-movflags",
             "+faststart",
-            concat_output,
+            video_only_path,
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
+
+        # Step 3: Mux video + untouched audio together
+        if os.path.exists(video_only_path) and os.path.exists(audio_concat_path):
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-i",
+                video_only_path,
+                "-i",
+                audio_concat_path,
+                "-c:v",
+                "copy",
+                "-c:a",
+                "copy",
+                "-shortest",
+                "-movflags",
+                "+faststart",
+                concat_output,
+            ]
+            subprocess.run(cmd, capture_output=True, text=True)
 
         if not os.path.exists(concat_output) or os.path.getsize(concat_output) == 0:
             if os.path.exists(concat_output):
