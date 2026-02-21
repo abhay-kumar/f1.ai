@@ -8,6 +8,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -19,6 +20,7 @@ from src.config import (
 
 try:
     from instagrapi import Client
+    from instagrapi.exceptions import ChallengeRequired
     from instagrapi.mixins.challenge import ChallengeChoice
 except ImportError:
     print("Missing dependency. Install with:")
@@ -48,6 +50,20 @@ def get_credentials():
 
 _pending_challenge_code = None
 
+# Modern device settings — Instagram blocks old app versions with "unsupported_version"
+DEVICE_SETTINGS = {
+    "app_version": "417.0.0.54.77",
+    "android_version": 34,
+    "android_release": "14.0",
+    "dpi": "480dpi",
+    "resolution": "1080x2400",
+    "manufacturer": "Google",
+    "device": "husky",
+    "model": "Pixel 8 Pro",
+    "cpu": "tensor",
+    "version_code": "578940096",
+}
+
 
 def challenge_code_handler(username, choice):
     """Handle Instagram challenge verification"""
@@ -70,7 +86,54 @@ def challenge_code_handler(username, choice):
     return code
 
 
-def get_authenticated_client():
+def handle_exception(client, e):
+    """Custom exception handler for instagrapi Client.
+
+    This replaces the default handler which calls challenge_resolve() and crashes
+    when Instagram returns unsupported_version or empty JSON responses.
+    For ChallengeRequired, we attempt the simple private API path first,
+    then fall back to re-raising so the caller can handle it.
+    """
+    if isinstance(e, ChallengeRequired):
+        last_json = client.last_json or {}
+        challenge = last_json.get("challenge", {})
+        challenge_url = challenge.get("api_path", "")
+        step_name = last_json.get("step_name", "")
+
+        # Check for unsupported_version — can't resolve, must update app version
+        if "unsupported_version" in challenge.get("url", ""):
+            raise ChallengeRequired(
+                f"Instagram blocked this app version. "
+                f"Update DEVICE_SETTINGS in instagram_uploader.py"
+            )
+
+        # Try simple challenge (delta_login_review = "was this you?")
+        if challenge_url and step_name in ("delta_login_review", ""):
+            try:
+                client.challenge_resolve_simple(challenge_url)
+                return  # resolved, private_request will retry
+            except Exception:
+                pass
+
+        # Re-raise so the caller can handle it (prompt for code, etc.)
+        raise
+    else:
+        raise e
+
+
+def _create_client():
+    """Create a properly configured instagrapi Client."""
+    cl = Client()
+    cl.challenge_code_handler = challenge_code_handler
+    cl.handle_exception = handle_exception
+    cl.set_device(DEVICE_SETTINGS)
+    cl.set_locale("en_US")
+    cl.set_timezone_offset(19800)  # IST (UTC+5:30)
+    cl.delay_range = [1, 3]
+    return cl
+
+
+def get_authenticated_client(delete_session=False):
     """Authenticate and return an instagrapi Client with session persistence"""
     credentials = get_credentials()
     if not credentials:
@@ -81,42 +144,86 @@ def get_authenticated_client():
         print("3. Line 2: your Instagram password")
         return None
 
-    cl = Client()
-    cl.challenge_code_handler = challenge_code_handler
+    # Delete stale session if requested
+    if delete_session and os.path.exists(INSTAGRAM_SESSION_FILE):
+        os.remove(INSTAGRAM_SESSION_FILE)
+        print("Deleted stale session file. Starting fresh.")
+
+    cl = _create_client()
 
     # Try to reuse existing session
     if os.path.exists(INSTAGRAM_SESSION_FILE):
         try:
             cl.load_settings(INSTAGRAM_SESSION_FILE)
+            # Override device settings from saved session with modern version
+            cl.set_device(DEVICE_SETTINGS)
             cl.login(credentials["username"], credentials["password"])
             cl.get_timeline_feed()  # Validate session is alive
             print("Logged in with saved session.")
             return cl
         except Exception:
-            print("Saved session expired, logging in fresh...")
+            print("Saved session expired, deleting and logging in fresh...")
+            try:
+                os.remove(INSTAGRAM_SESSION_FILE)
+            except OSError:
+                pass
 
-    # Fresh login
+    # Fresh login with new client to avoid stale UUIDs
+    cl = _create_client()
+
     try:
         cl.login(credentials["username"], credentials["password"])
-    except Exception as e:
-        error_msg = str(e)
-        if "challenge_required" in error_msg:
-            print("Instagram requires verification. Attempting challenge resolution...")
-            try:
-                cl.challenge_resolve(cl.last_json)
-                print("Challenge resolved!")
-            except Exception as ce:
-                print(f"Challenge resolution failed: {ce}")
-                return None
-        else:
-            print(f"Instagram login failed: {e}")
+    except ChallengeRequired:
+        print("Instagram requires verification during login...")
+        if not _try_resolve_challenge(cl):
             return None
+    except Exception as e:
+        print(f"Instagram login failed: {e}")
+        return None
+
+    # Warmup: establish the session with a lightweight request
+    try:
+        cl.account_info()
+    except Exception:
+        pass  # Non-critical, proceed anyway
 
     # Save session for reuse
     os.makedirs(os.path.dirname(INSTAGRAM_SESSION_FILE), exist_ok=True)
     cl.dump_settings(INSTAGRAM_SESSION_FILE)
     print("Logged in and session saved.")
     return cl
+
+
+def _try_resolve_challenge(cl):
+    """Attempt to resolve an Instagram challenge via private API then contact form.
+    Returns True if resolved, False otherwise."""
+    last_json = cl.last_json or {}
+
+    # Try the simple/private API path first (handles "was this you?" / delta_login_review)
+    try:
+        if last_json.get("challenge", {}).get("api_path"):
+            challenge_url = last_json["challenge"]["api_path"]
+            step_name = last_json.get("step_name", "")
+            if step_name in ("delta_login_review", ""):
+                print("Attempting automatic challenge approval (was this you?)...")
+                cl.challenge_resolve_simple(challenge_url)
+                print("Challenge resolved automatically!")
+                return True
+    except Exception:
+        pass  # Fall through to contact form
+
+    # Try the contact form path (sends SMS/email code)
+    try:
+        print("Attempting challenge resolution (may send SMS/email code)...")
+        cl.challenge_resolve(last_json)
+        print("Challenge resolved!")
+        return True
+    except Exception as e:
+        print(f"Challenge resolution failed: {e}")
+        print("\nTo fix this:")
+        print("  1. Log into Instagram on your phone and approve any security prompts")
+        print("  2. Wait 10 minutes, then retry with: --delete-session")
+        return False
 
 
 def generate_caption_from_script(script):
@@ -192,21 +299,63 @@ def generate_caption_from_script(script):
     return caption
 
 
-def upload_reel(client, video_path, caption):
+def upload_reel(client, video_path, caption, max_retries=2):
     """Upload video as an Instagram Reel, resolving challenges if needed"""
-    print("Uploading Reel", end="", flush=True)
-    try:
-        media = client.clip_upload(Path(video_path), caption)
-    except Exception as e:
-        if "challenge_required" in str(e):
-            print("\nUpload triggered a challenge. Resolving...")
-            client.challenge_resolve(client.last_json)
-            print("Challenge resolved. Retrying upload...")
+    for attempt in range(1, max_retries + 1):
+        print(
+            f"Uploading Reel (attempt {attempt}/{max_retries})...", end="", flush=True
+        )
+        try:
             media = client.clip_upload(Path(video_path), caption)
-        else:
+            print(" Done!")
+            return media
+        except ChallengeRequired:
+            print(f"\nUpload triggered a challenge on attempt {attempt}.")
+            if attempt >= max_retries:
+                print("Max retries reached.")
+                print("\nTo fix this:")
+                print(
+                    "  1. Log into Instagram on your phone and approve any security prompts"
+                )
+                print("  2. Wait 10 minutes, then retry with: --delete-session")
+                raise
+            if _try_resolve_challenge(client):
+                # Save updated session after challenge resolution
+                try:
+                    os.makedirs(os.path.dirname(INSTAGRAM_SESSION_FILE), exist_ok=True)
+                    client.dump_settings(INSTAGRAM_SESSION_FILE)
+                except Exception:
+                    pass
+                print("Waiting 10 seconds before retry...")
+                time.sleep(10)
+                continue
+            else:
+                raise
+        except Exception as e:
+            if "challenge_required" in str(e):
+                print(f"\nUpload triggered a challenge on attempt {attempt}.")
+                if attempt >= max_retries:
+                    print("Max retries reached.")
+                    print("\nTo fix this:")
+                    print(
+                        "  1. Log into Instagram on your phone and approve any security prompts"
+                    )
+                    print("  2. Wait 10 minutes, then retry with: --delete-session")
+                    raise
+                if _try_resolve_challenge(client):
+                    try:
+                        os.makedirs(
+                            os.path.dirname(INSTAGRAM_SESSION_FILE), exist_ok=True
+                        )
+                        client.dump_settings(INSTAGRAM_SESSION_FILE)
+                    except Exception:
+                        pass
+                    print("Waiting 10 seconds before retry...")
+                    time.sleep(10)
+                    continue
+                else:
+                    raise
             raise
-    print(" Done!")
-    return media
 
 
 def main():
@@ -219,6 +368,11 @@ def main():
     parser.add_argument(
         "--verification-code",
         help="Instagram verification code for challenge resolution",
+    )
+    parser.add_argument(
+        "--delete-session",
+        action="store_true",
+        help="Delete saved session and login fresh (fixes recurring challenges)",
     )
     args = parser.parse_args()
 
@@ -263,7 +417,7 @@ def main():
     print("\n" + "-" * 60)
 
     # Authenticate and upload
-    client = get_authenticated_client()
+    client = get_authenticated_client(delete_session=args.delete_session)
     if not client:
         sys.exit(1)
 

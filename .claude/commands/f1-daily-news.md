@@ -11,12 +11,20 @@ You are creating a daily F1 news update short video. This command orchestrates t
 
 ### Phase 1: Find Trending Stories
 
-Use `/f1-find-content day` to discover trending F1 stories from the past 24 hours.
+First, fetch trending posts directly from Reddit using the API:
+```bash
+python3 src/reddit_fetcher.py --top day --limit 30
+```
+
+This returns posts with scores, titles, permalinks, and **extracted media URLs** (images, GIFs, videos) — all available for use in the video.
+
+Then use `/f1-find-content day` to analyze these posts and generate video ideas.
 
 This will:
-- Search Reddit's r/formula1 for popular discussions from the past 24 hours
+- Use the Reddit API data to identify popular discussions from the past 24 hours
+- Extract media URLs from each post for footage sourcing
 - Filter out duplicate ideas already in `shared/reddit_ideas.json`
-- Present a ranked list of newsworthy stories
+- Present a ranked list of newsworthy stories with their Reddit media
 
 After reviewing the ideas from `/f1-find-content day`:
 
@@ -120,6 +128,76 @@ Pre-downloaded footage for consistent elements is stored in `shared/assets/daily
 - `outro.mp4` - F1 racing action montage for the outro segment
 
 These assets should be copied to each new project's footage folder to avoid redundant downloads and ensure visual consistency across episodes.
+
+### Media Sourcing Priority (Reddit-First Approach)
+
+**CRITICAL**: Reddit media is ALWAYS the first choice for daily news visuals. These stories come from Reddit — the original posts almost always contain images, GIFs, or video clips that are purpose-made for the story. YouTube compilation videos are unreliable (wrong timestamps, wrong teams, burned-in graphics). Google Images return old-season cars. Reddit media is current, relevant, and matches the story exactly.
+
+**During Phase 1 (Story Discovery)**, the Reddit fetcher (`python3 src/reddit_fetcher.py --top day --limit 30`) automatically extracts all media URLs from each post. Media URLs are included in the output and should be stored in `shared/reddit_ideas.json` with each story idea.
+
+Common Reddit media URL patterns (extracted automatically by the fetcher):
+  - Images: `https://i.redd.it/xxxxx.jpg` or `https://preview.redd.it/xxxxx.jpg`
+  - GIFs (served as MP4): `https://preview.redd.it/xxxxx.gif?format=mp4&s=xxxxx`
+  - Videos: `https://v.redd.it/xxxxx` or `https://packaged-media.redd.it/xxxxx`
+
+For any story where the fetcher didn't find media (e.g., text-only discussion posts), you can fetch the specific post for more detail:
+```bash
+python3 src/reddit_fetcher.py --post "https://reddit.com/r/formula1/comments/..."
+```
+
+**Priority order for ALL visual assets:**
+
+1. **Reddit media (FIRST PRIORITY — use for every story if available)**:
+   - GIFs/short clips from Reddit posts are IDEAL for shorts: they're vertical-friendly, current, and show exactly the moment being discussed
+   - Reddit GIFs served as MP4 (`preview.redd.it/xxx.gif?format=mp4`) are perfect short clips (3-10s)
+   - Reddit videos (`v.redd.it`, `packaged-media.redd.it`) are higher quality but may need trimming
+   - Reddit images (`i.redd.it`) work great for Ken Burns shots
+   - Download commands:
+     - GIF/MP4: `curl -L -o footage/segment_XX_shot_YY.mp4 "https://preview.redd.it/xxx.gif?format=mp4&s=xxx"`
+     - Video: `yt-dlp -o footage/segment_XX.mp4 "https://v.redd.it/xxx"` or `yt-dlp -o footage/segment_XX.mp4 "https://packaged-media.redd.it/xxx"`
+     - Image: `curl -L -o footage/segment_XX_shot_YY.jpg "https://i.redd.it/xxx.jpg"`
+   - **When a Reddit clip is shorter than the shot duration**: The assembler will hold on the last frame. This looks natural for 1-2s. For longer holds, split into two shots — video first, then image.
+   - **When a Reddit clip is 9:16 vertical**: Perfect — no blurred-background letterboxing needed. Set `footage_start: 0` to play from the beginning.
+
+2. **Official F1 channel footage (SECOND PRIORITY)**: Only if Reddit has no usable media:
+   - Use `footage_query` to search official FORMULA 1 YouTube channel
+   - Prefer recent testing/race footage from the official channel
+   - **WARNING**: YouTube compilation videos are unreliable — `footage_start` timestamps often land on wrong teams/content. Always verify with preview frames.
+
+3. **Google Images (THIRD PRIORITY)**: Last resort:
+   - Use `--google-search` flag with the footage downloader
+   - Good for driver portraits, team principal photos
+   - Returns older-season cars — acceptable for portraits, not ideal for on-track action
+
+When writing `script.json`, include a `reddit_media_url` field in each segment or shot where Reddit media is available:
+```json
+{
+  "reddit_media_url": "https://preview.redd.it/xxx.gif?format=mp4&s=xxx",
+  "reddit_media_type": "video"
+}
+```
+Or for images:
+```json
+{
+  "reddit_media_url": "https://i.redd.it/abc123.jpg",
+  "reddit_media_type": "image"
+}
+```
+
+The footage downloader **automatically handles Reddit media** when `reddit_media_url` is present in script.json segments/shots. It downloads Reddit media first (highest priority), then falls back to YouTube/Google/Pexels for any segments without Reddit media. No manual `curl` downloads needed.
+
+Just run:
+```bash
+python3 src/footage_downloader.py --project {name} --google-search
+```
+
+**Tips for finding Reddit media:**
+- r/formula1 posts with testing footage often have v.redd.it clips of 10-30 seconds
+- Image posts frequently have high-res photos from official team social media
+- GIF posts (preview.redd.it with `?format=mp4`) are 3-10s clips perfect for shots
+- Check top comments for additional media links (streamable, imgur, Twitter clips)
+- Cross-posted content from r/F1Technical often has close-up technical photos
+- Reddit galleries: download the most relevant image from the gallery
 
 ### Phase 3: Video Production
 

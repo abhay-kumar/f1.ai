@@ -28,6 +28,7 @@ YOUTUBE_TOKEN_FILE = f"{SHARED_DIR}/creds/youtube_token.pickle"
 INSTAGRAM_CREDENTIALS_FILE = f"{SHARED_DIR}/creds/instagram"
 INSTAGRAM_SESSION_FILE = f"{SHARED_DIR}/creds/instagram_session.json"
 
+
 # Video Config
 FRAME_RATE = 30  # CRITICAL: Must be consistent across all segments
 VIDEO_BITRATE = "8M"
@@ -202,6 +203,14 @@ OFFICIAL_F1_CHANNELS = [
     "BWT Alpine F1 Team",
     "Williams Racing",
 ]
+
+# ============================================================================
+# CAROUSEL CONFIG (Instagram square posts)
+# ============================================================================
+
+CAROUSEL_SLIDE_SIZE = 1080  # 1080x1080 square
+CAROUSEL_JPEG_QUALITY = 95  # High quality for Instagram
+CAROUSEL_MAX_SLIDES = 10  # Instagram limit
 
 # ============================================================================
 # HELPER FUNCTIONS

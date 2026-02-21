@@ -38,21 +38,16 @@ The project name is the folder name under `projects/` containing the video to up
 
    Note: Title automatically includes #Shorts to ensure YouTube classifies it as a Short.
 
-6. **Upload to Instagram** as a Reel:
-   ```bash
-   python3 src/instagram_uploader.py --project {project}
-   ```
-   Or with custom caption:
-   ```bash
-   python3 src/instagram_uploader.py --project {project} --caption "Custom caption"
-   ```
-
-   Note: If Instagram credentials are not configured, inform the user and skip (don't block YouTube upload).
+6. **Instagram (manual upload)**:
+   - Generate and display the Instagram caption (summary + hashtags + disclaimer) for the user to copy
+   - Do NOT run `instagram_uploader.py` or attempt any programmatic upload
+   - Do NOT generate or display a thumbnail image
+   - Simply present the caption text so the user can paste it when uploading manually via the Instagram app
 
 7. **Report the result**:
    - Show the YouTube Shorts URL
-   - Show the Instagram Reel URL
-   - Confirm upload_info.json was saved with both URLs
+   - Show the Instagram caption for manual upload
+   - Confirm upload_info.json was saved with the YouTube URL
 
 ## First-time Setup
 
@@ -68,15 +63,6 @@ If YouTube credentials are not configured, guide the user:
 
 First upload will open a browser for Google sign-in to grant YouTube access.
 
-### Instagram
-If Instagram credentials are not configured, guide the user:
-
-1. Create the file: `shared/creds/instagram`
-2. Line 1: Instagram username
-3. Line 2: Instagram password
-
-First upload will create a session file automatically at `shared/creds/instagram_session.json`.
-
 ## Example Usage
 
 ```
@@ -91,4 +77,4 @@ This will:
 5. Auto-tag: F1, Vettel, Webber, Norris, McLaren, Red Bull, etc.
 6. Ask for confirmation
 7. Upload to YouTube and return the YouTube Shorts URL
-8. Upload to Instagram and return the Instagram Reel URL
+8. Display the Instagram caption for manual upload
