@@ -39,10 +39,20 @@ This file tracks all ideas you've proposed to avoid duplicates. The format is:
 
 1. **Load Existing Ideas**: Read `shared/reddit_ideas.json` to know what's already been proposed. If the file doesn't exist, start with an empty list.
 
-2. **Search Reddit**: Use web search to find popular threads from r/formula1 within the specified time range:
-   - For `day`: `site:reddit.com/r/formula1 past 24 hours popular`, `reddit r/formula1 trending today`
-   - For `week`: `site:reddit.com/r/formula1 past week popular`, `reddit r/formula1 trending this week`
-   - For `month`: `site:reddit.com/r/formula1 past month popular`, `reddit r/formula1 trending this month`
+2. **Search Reddit**: Use the Reddit API fetcher to get top posts directly:
+   ```bash
+   python3 src/reddit_fetcher.py --top {time_range} --limit 25
+   ```
+   - For `day`: `python3 src/reddit_fetcher.py --top day --limit 25`
+   - For `week`: `python3 src/reddit_fetcher.py --top week --limit 25`
+   - For `month`: `python3 src/reddit_fetcher.py --top month --limit 25`
+   
+   This returns posts with scores, titles, permalinks, and **extracted media URLs** (images, GIFs, videos).
+   
+   No API key needed — uses Reddit's public `.json` endpoints.
+   
+   If the fetcher fails (rate limited or blocked), fall back to web search:
+   - `site:reddit.com/r/formula1 popular`, `reddit r/formula1 trending`
    
 3. **Analyze Threads**: For each popular thread found, evaluate:
    - Is it a compelling story/fact that works in 60 seconds?
@@ -59,8 +69,24 @@ This file tracks all ideas you've proposed to avoid duplicates. The format is:
    - Each idea should be specific enough to create a script
    - Include a catchy title and brief synopsis
    - Note the Reddit source that inspired it
+   - **Include media URLs** from the Reddit post (if any) — these are critical for footage sourcing
 
-6. **Update Storage**: Append the new ideas to `shared/reddit_ideas.json` with today's date
+6. **Update Storage**: Append the new ideas to `shared/reddit_ideas.json` with today's date. Include `media` array with any Reddit media URLs found:
+   ```json
+   {
+     "id": "unique-slug",
+     "title": "Video Title",
+     "synopsis": "Description",
+     "reddit_source": "Thread title",
+     "reddit_url": "https://www.reddit.com/r/formula1/comments/...",
+     "proposed_date": "2026-02-19",
+     "status": "proposed",
+     "media": [
+       {"url": "https://preview.redd.it/xxx.gif?format=mp4", "type": "gif"},
+       {"url": "https://i.redd.it/xxx.jpg", "type": "image"}
+     ]
+   }
+   ```
 
 7. **Present Results**: Display the ideas in a clear, actionable format
 
@@ -86,6 +112,7 @@ Present the ideas as a numbered list:
 1. **[Title]**
    Synopsis: [2-3 sentence description]
    Reddit source: [Thread/topic that inspired this]
+   Media: [List any Reddit media URLs found — GIF, image, video]
    Why it works: [Brief explanation]
 
 2. ...

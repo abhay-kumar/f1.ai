@@ -600,6 +600,9 @@ def get_download_tasks(segments: list, footage_dir: str) -> list:
                         "footage_file": footage_file,
                         "footage_start": shot.get("footage_start", 0),
                         "source_type": source_type,
+                        "reddit_media_url": shot.get("reddit_media_url", ""),
+                        "reddit_media_type": shot.get("reddit_media_type", ""),
+                        "reddit_image_url": shot.get("reddit_image_url", ""),
                     }
                 )
         else:
@@ -615,6 +618,9 @@ def get_download_tasks(segments: list, footage_dir: str) -> list:
                     "footage_file": footage_file,
                     "footage_start": seg.get("footage_start", 0),
                     "source_type": "youtube_clip",
+                    "reddit_media_url": seg.get("reddit_media_url", ""),
+                    "reddit_media_type": seg.get("reddit_media_type", ""),
+                    "reddit_image_url": "",
                 }
             )
 
@@ -643,6 +649,22 @@ def download_task(
     if os.path.exists(full_path):
         return task["seg_idx"], task["shot_idx"], True, "cached", None
 
+    # Reddit media priority (highest — try before YouTube/Google/Pexels)
+    reddit_url = task.get("reddit_media_url") or task.get("reddit_image_url")
+    if reddit_url:
+        success, error = _download_reddit_task(reddit_url, full_path)
+        if success:
+            return (
+                task["seg_idx"],
+                task["shot_idx"],
+                True,
+                f"reddit: {reddit_url[:40]}",
+                None,
+            )
+        safe_print(
+            f"  [Reddit] Failed for seg {task['seg_idx']} ({error}), falling back"
+        )
+
     if task["source_type"] == "image":
         return _download_image_task(
             task, full_path, use_google, validate, max_candidates
@@ -651,6 +673,104 @@ def download_task(
         return _download_video_task(
             task, full_path, footage_dir, use_google, validate, max_candidates
         )
+
+
+def _download_reddit_task(
+    reddit_url: str, full_path: str
+) -> Tuple[bool, Optional[str]]:
+    """Download media from a Reddit URL (highest priority source).
+
+    Handles:
+    - i.redd.it images: direct HTTP download
+    - preview.redd.it GIF-as-MP4: direct HTTP download
+    - v.redd.it videos: yt-dlp (handles audio+video merge)
+    - packaged-media.redd.it: yt-dlp
+
+    Returns (success, error_message)
+    """
+    if not reddit_url:
+        return False, "No Reddit URL"
+
+    # Direct HTTP download for images and preview GIF-as-MP4
+    if any(d in reddit_url for d in ["i.redd.it", "preview.redd.it"]):
+        try:
+            req = urllib.request.Request(
+                reddit_url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                    "Accept": "*/*",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=30) as response:
+                data = response.read()
+
+            if len(data) < 500:
+                return False, "Downloaded file too small"
+
+            with open(full_path, "wb") as f:
+                f.write(data)
+            return True, None
+        except Exception as e:
+            return False, str(e)[:100]
+
+    # yt-dlp for v.redd.it and packaged-media.redd.it (handles audio+video merge)
+    if any(d in reddit_url for d in ["v.redd.it", "packaged-media.redd.it", "redd.it"]):
+        cmd = [
+            "yt-dlp",
+            "--no-warnings",
+            "-f",
+            "bestvideo+bestaudio/best",
+            "--merge-output-format",
+            "mp4",
+            "-o",
+            full_path,
+            reddit_url,
+        ]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        except subprocess.TimeoutExpired:
+            return False, "yt-dlp timed out"
+
+        if os.path.exists(full_path) and os.path.getsize(full_path) > 0:
+            return True, None
+        return False, (result.stderr[:200] if result.stderr else "Unknown error")
+
+    # Unknown Reddit URL pattern — try direct download first, then yt-dlp
+    try:
+        req = urllib.request.Request(
+            reddit_url,
+            headers={"User-Agent": "Mozilla/5.0", "Accept": "*/*"},
+        )
+        with urllib.request.urlopen(req, timeout=30) as response:
+            data = response.read()
+        if len(data) > 500:
+            with open(full_path, "wb") as f:
+                f.write(data)
+            return True, None
+    except Exception:
+        pass
+
+    # Fallback to yt-dlp
+    cmd = [
+        "yt-dlp",
+        "--no-warnings",
+        "-f",
+        "bestvideo+bestaudio/best",
+        "--merge-output-format",
+        "mp4",
+        "-o",
+        full_path,
+        reddit_url,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        return False, "yt-dlp timed out"
+
+    if os.path.exists(full_path) and os.path.getsize(full_path) > 0:
+        return True, None
+    return False, "All download methods failed"
 
 
 def _download_image_task(

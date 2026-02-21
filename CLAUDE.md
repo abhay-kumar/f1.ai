@@ -4,18 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-F1.ai is an automated pipeline for creating F1-themed content. It supports four formats:
+F1.ai is an automated pipeline for creating F1-themed content. It supports five formats:
 
 1. **Shorts** (60-second vertical videos, 9:16) - Quick, engaging content for mobile
 2. **Long-form** (~10-minute horizontal videos, 16:9, up to 4K) - In-depth content with references
 3. **Podcasts** (~20-minute audio episodes) - Engaging monologue-style content for RSS.com/Spotify
 4. **Animated videos** (Remotion) - Programmatic React animations synced to voiceover for technical explainers
+5. **Carousels** (Instagram multi-image posts, 1080x1080) - Professional swipeable slide decks for Instagram
 
 **Video formats** orchestrate: script creation → fact checking → voiceover generation (Gemini TTS / ElevenLabs) → footage acquisition (yt-dlp) → video assembly (FFmpeg with GPU acceleration) → YouTube + Instagram upload.
 
 **Animated video format** orchestrates: script creation → TTS generation → VTT transcript parsing → Remotion animation composition → frame-by-frame rendering → video output.
 
 **Podcast format** orchestrates: script creation → single-request TTS generation (Gemini) → music mixing (intro/outro) → RSS.com upload.
+
+**Carousel format** orchestrates: content sourcing (Reddit/web/text) → script creation → image sourcing → HTML/CSS slide rendering (Playwright) → manual Instagram upload.
 
 ## Common Commands
 
@@ -61,6 +64,14 @@ bash src/download_footage.sh {name} "0 1 3 6 8"       # Specific segments only
 
 # Extract preview frames (concurrent by default)
 python3 src/preview_extractor.py --project {name}
+
+# Fetch trending Reddit posts with media (for content discovery)
+python3 src/reddit_fetcher.py --top day --limit 25           # Top posts from past 24 hours
+python3 src/reddit_fetcher.py --top week --limit 25          # Top posts from past week
+python3 src/reddit_fetcher.py --hot --limit 10               # Currently trending
+python3 src/reddit_fetcher.py --top day --media-only         # Only posts with media
+python3 src/reddit_fetcher.py --post "https://reddit.com/r/formula1/comments/..."  # Specific post
+python3 src/reddit_fetcher.py --test                         # Test connectivity (no API key needed)
 ```
 
 ### Shorts Commands (9:16 Vertical)
@@ -167,6 +178,16 @@ python3 src/podcast_music_mixer.py --project {name} \
 python3 src/podcast_music_mixer.py --project {name} --dry-run
 ```
 
+### Carousel Commands (Instagram Multi-Image Posts)
+
+```bash
+# Generate carousel slides (1080x1080 JPEG)
+python3 src/carousel_generator.py --project {name}
+python3 src/carousel_generator.py --project {name} --theme ferrari    # Override theme
+python3 src/carousel_generator.py --project {name} --slide 3          # Regenerate single slide
+python3 src/carousel_generator.py --project {name} --list             # Preview slide plan
+```
+
 ## Architecture
 
 **Pipeline Flow:**
@@ -180,7 +201,8 @@ script.json → fact_check → audio/*.mp3 → footage/*.mp4 → previews/*.jpg 
 - `audio_generator.py` - Gemini TTS (default, free) / ElevenLabs TTS with caching and **concurrent processing**
 - `gemini_podcast_audio_generator.py` - **Podcast**: Single-request TTS for voice consistency
 - `podcast_music_mixer.py` - **Podcast**: Intro/outro music mixing with FFmpeg
-- `footage_downloader.py` - yt-dlp YouTube search/download with **concurrent downloads**, 4K support, per-shot downloads
+- `reddit_fetcher.py` - Reddit OAuth2 API: fetch r/formula1 posts + extract media (images, GIFs, videos, galleries)
+- `footage_downloader.py` - yt-dlp YouTube search/download with **concurrent downloads**, 4K support, per-shot downloads, **Reddit media priority**
 - `shot_assembler.py` - Shared shot list logic: timing calculation, clip creation, transition stitching (used by both assemblers)
 - `stock_image_fetcher.py` - Pexels/Unsplash API for stock photos, Google Images for person portraits
 - `google_image_search.py` - Playwright-based Google Images scraper + Google-for-YouTube search
@@ -192,6 +214,7 @@ script.json → fact_check → audio/*.mp3 → footage/*.mp4 → previews/*.jpg 
 - `download_footage.sh` - Sequential footage downloader in isolated subprocesses (fallback for hangs/memory leaks)
 - `video_assembler.py` - Shorts: 9:16 vertical FFmpeg composition with GPU acceleration
 - `video_assembler_longform.py` - Long-form: 16:9 horizontal with YouTube footage (legacy)
+- `carousel_generator.py` - **Carousel**: HTML/CSS slide rendering via Playwright, 14 themes, 6 slide types
 - `youtube_uploader.py` - Shorts: OAuth upload with #Shorts hashtag
 - `instagram_uploader.py` - Shorts: Instagram Reels upload via instagrapi
 - `youtube_uploader_longform.py` - Long-form: Standard video upload with **references in description**
@@ -236,6 +259,17 @@ projects/{name}/
         └── final.mp4             # Rendered video
 ```
 
+**Project Structure (Carousel):**
+```
+projects/{name}/
+├── script.json      # Slides with type, content, theme (format: "carousel")
+├── images/          # Source images (backgrounds, portraits)
+└── output/
+    ├── slide_01.jpg  # Cover slide (1080x1080)
+    ├── slide_02.jpg  # Content slides...
+    └── slide_NN.jpg  # CTA slide (auto-appended, always last)
+```
+
 **Remotion Shared Template (`shared/remotion-template/`):**
 - Reusable scaffold for any animated F1 video
 - Clone into project with `cp -r shared/remotion-template projects/{name}/video`
@@ -255,6 +289,7 @@ projects/{name}/
 - OpenAI API (DALL-E graphics - optional)
 - Playwright (`pip install playwright && playwright install chromium` - Google search scraping for `--google-search`)
 - Google Gemini Flash vision (free tier via `google-genai` - footage validation for `--validate`)
+- Reddit public .json endpoints (no API key, ~10 RPM unauthenticated)
 - Remotion (`npm install remotion @remotion/cli` - animated video rendering)
 - Node.js (required for Remotion)
 
@@ -509,6 +544,8 @@ python3 src/fact_checker.py --project {name} --strict  # Exit non-zero if unveri
 - `music_mood`: Override music volume (`uplifting`, `atmospheric`, `default`)
 - `transition_sfx`: Override transition sound (`swoosh`, `fade`)
 - `shots`: Array of shot objects for multi-visual segments (see Shot List below)
+- `reddit_media_url`: Direct URL to Reddit media (image, GIF-as-MP4, or video). Downloaded first by footage_downloader.
+- `reddit_media_type`: Type of Reddit media: `"image"`, `"video"`, or `"gif"`
 
 ### Shot List (Multi-Visual Segments)
 
@@ -595,6 +632,64 @@ Each segment can contain a `shots` array to break narration into multiple visual
 - `emotion`: Segment mood (energetic, intrigued, contemplative, humorous, sarcastic, heartfelt, serious, passionate)
 - `context`: Editorial note for organization (not spoken)
 - Inline emotion markers: `[excited]`, `[sarcastic]`, `[whispering]`, `[laughing]`, etc.
+
+### Carousel Format
+
+```json
+{
+  "title": "5 Things About Ferrari's 2026 Car",
+  "format": "carousel",
+  "theme": "ferrari",
+  "source_url": "https://reddit.com/r/formula1/comments/...",
+  "slides": [
+    {
+      "type": "cover",
+      "headline": "5 Things You Didn't Know About Ferrari's 2026 Car",
+      "subheadline": "Swipe to find out"
+    },
+    {
+      "type": "content",
+      "number": 1,
+      "heading": "The Engine is Revolutionary",
+      "body": "Ferrari's new power unit delivers 350kW of electrical power."
+    },
+    {
+      "type": "content_stat",
+      "stat": "350kW",
+      "label": "Electrical power output — 3x more than 2025"
+    },
+    {
+      "type": "content_quote",
+      "quote": "This is the most ambitious project in Ferrari's history.",
+      "speaker": "Fred Vasseur",
+      "role": "Ferrari Team Principal"
+    },
+    {
+      "type": "content_image",
+      "heading": "The SF-26 on track at Fiorano",
+      "background_image": "images/fiorano.jpg"
+    }
+  ]
+}
+```
+
+**Key Fields:**
+- `type`: Slide type — `cover`, `content`, `content_stat`, `content_quote`, `content_image`
+- `theme`: Auto-detected from content or manual — 10 F1 teams + `dramatic`, `gold`, `breaking`, `stats`
+- CTA slide is auto-appended by the generator (not in script.json)
+- `background_image`: URL or local path — downloaded to `images/` automatically
+- `speaker_image`: Portrait URL for quote slides (optional)
+
+## Carousel Lessons
+
+1. **Use `\n` for vertical lists in body text** — Steps, numbered lists, and bullet points should use newline characters in the `body` field. The generator converts `\n` to `<br>` for proper vertical layout. A wall of "Step 1: ... Step 2: ... Step 3: ..." reads terribly on Instagram — each step needs its own line.
+2. **Memes should use real meme templates, not infographic slides** — The `content_meme` slide type generates clean comparison panels, but for actual internet memes (e.g., "They're the same picture" Pam), use the real template image and composite with FFmpeg. Users expect the authentic meme format, not a branded version.
+3. **Meme template compositing workflow** — Download the raw template from imgflip (e.g., `https://i.imgflip.com/2za3u1.jpg`), programmatically detect white/blank zones using flood fill on a downscaled PPM, then overlay images into those zones with FFmpeg. Do NOT add text that the template already contains — inspect the raw template first.
+4. **Memegen.link API** (`https://api.memegen.link`) is free, no auth, and supports text-only memes well. Template IDs: `same` (They're the same picture), `db` (Distracted Boyfriend), `spiderman` (Spider-Man pointing). But its `style[]` overlay feature places images too small — use FFmpeg compositing for image-in-template memes instead.
+5. **Reddit images often block direct download** — `external-preview.redd.it` URLs return HTML instead of images when downloaded with curl. Use Google Images search (`search_google_images()`) as a reliable alternative for sourcing F1 car/person photos.
+6. **Keep slides under 30 words** — Instagram is visual-first. If body text is getting long, split into two slides or use a `content_stat` slide to pull out the key number.
+7. **The CTA slide is auto-appended** — Never include it in script.json. The generator always adds it as the last slide with the F1 Burnouts logo + Follow/Like/Share.
+8. **Max 10 slides on Instagram** — Plan for 8 content slides + 1 cover + 1 auto-CTA = 10 total (the Instagram maximum).
 
 ## Long-Form Video Features
 

@@ -12,7 +12,7 @@ You are creating an F1 short video inspired by a specific Reddit thread. This co
 
 ### Phase 1: Read the Reddit Thread
 
-1. **Fetch the Reddit post**: Use WebFetch to read the Reddit URL provided in `$ARGUMENTS`. Fetch the URL with `.json` appended (e.g., `https://www.reddit.com/r/formula1/comments/abc123/post_title.json`) to get structured data, or fetch the regular URL and extract the content.
+1. **Fetch the Reddit post**: Use `python3 src/reddit_fetcher.py --post URL` to fetch the post and comments via Reddit OAuth2 API. If reddit_fetcher is unavailable, fall back to fetching the JSON via curl: `curl -s -L -A "Mozilla/5.0" "URL.json?limit=50&sort=top" -o /tmp/reddit_thread.json` then parse with Python. **Do NOT use WebFetch** — Reddit blocks all WebFetch requests.
 
 2. **Extract key information**:
    - **OP's post**: Title, full text/body, any links or images referenced
@@ -174,6 +174,16 @@ Not every aspect of a Reddit thread makes a good 60-second video. Evaluate the t
 7. **F1 official site serves WebP as .jpg** — Images from `media.formula1.com` and F1 Fandom Wiki are WebP format despite having `.jpg` in the URL. Always convert with `ffmpeg -y -i input.jpg -q:v 2 output.jpg` before using in the assembler.
 
 8. **No background music for reddit idea shorts** — Use `--no-music` flag. The progressive reveal captions + narration are enough. Music competes with the intimate, story-driven tone of reddit idea content.
+
+9. **Always read the actual Reddit thread BEFORE scripting** — Do NOT reconstruct the topic from web search articles. Web articles cover related topics but miss the specific question, community debate, and top-voted answers that make the thread unique. The OP's exact framing and the community's ranked responses ARE the content. Scripting from web searches alone leads to a generic explainer instead of a Reddit-inspired short.
+
+10. **Use top Reddit comments as the script backbone** — The community has already surfaced, debated, and ranked the best answers. Map high-upvote comments directly to script segments. A comment with 2,000 upvotes that says "it's basically traction control" is a better script beat than any angle you'll find from web research.
+
+11. **Hook with the problem, then tease the solution** — Start with the F1 problem or controversy ("F1 2026 cars have a huge problem with race starts"), THEN pivot to the surprising comparison or answer. Problem-first hooks grab attention better than leading with context. The viewer needs to feel the problem before they care about the answer.
+
+12. **Delete ALL footage files when rewriting a script** — The downloader caches by filename (`segment_XX_shot_YY.jpg`). When script segments are reordered or rewritten, old files at the same paths are falsely treated as valid cached footage (e.g., Jean Todt's portrait appearing during a "battery energy" segment). Always `rm footage/segment_*` before redownloading after any script rewrite that changes segment order or content.
+
+13. **WebFetch cannot access Reddit** — Reddit blocks all WebFetch/web scraping attempts across `www.reddit.com`, `old.reddit.com`, and `api.reddit.com`. Use `reddit_fetcher.py --post URL` (OAuth2 API) or fall back to `curl` with browser User-Agent to fetch the `.json` endpoint.
 
 ### Tips for Reddit Thread Analysis
 
