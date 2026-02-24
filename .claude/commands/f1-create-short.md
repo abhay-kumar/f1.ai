@@ -141,6 +141,109 @@ f1.ai/
 14. **yt-dlp keyword search often returns wrong teams** - `ytsearch1:` frequently returns completely wrong content (e.g., McLaren when Red Bull was requested). When accuracy matters: (1) use `--google-search` flag for better results, (2) search for specific YouTube URLs from official channels, (3) download broad compilation videos and use subtitle search to find the right timestamp.
 15. **yt-dlp can hang indefinitely** - Some downloads stall forever. Use `--socket-timeout 20` when downloading via direct yt-dlp commands. If the Python downloader hangs, fall back to `bash src/download_footage.sh {name}` which runs each download in an isolated subprocess.
 
+### Footage Sourcing Lessons
+
+1. **Always prefer official F1 channel** - Fan channels (e.g., USA SportsLine, Saile Racing) often have screen recordings with visible cursors, news anchors, or low-quality re-uploads. Official FORMULA 1 channel footage is consistently clean and high quality.
+2. **Use broad official videos + transcript search for specific teams** - Searching for a specific team's car launch often returns fan re-uploads. Instead, download a broad official video (e.g., "2026 F1 Barcelona Shakedown highlights") and use `yt-dlp --write-auto-sub` to extract subtitles, then grep for the team name to find the exact timestamp.
+3. **Subtitle-based timestamp finding**:
+   ```bash
+   yt-dlp --write-auto-sub --sub-lang en --skip-download --sub-format vtt -o /tmp/subs "https://youtube.com/watch?v=VIDEO_ID"
+   grep -i "alpine" /tmp/subs*.vtt
+   ```
+4. **Add 1-2 seconds buffer to subtitle timestamps** - Video content often doesn't match narration exactly. When subtitles mention a team at timestamp X, the visual may still show the previous team for 1-2 seconds.
+5. **Delete previews before re-extracting** - Preview images are cached. After replacing footage, delete old previews (`rm previews/segNN_*.jpg`) before running preview_extractor.
+6. **Delete footage before re-downloading** - `yt-dlp` may skip download if a file already exists at the output path. Always `rm` the old file first.
+7. **Ensure all segments have `footage` key** - Set the `footage` field for ALL segments in script.json at creation time (e.g., `"footage": "segment_00.mp4"`).
+8. **Compilation videos often serve wrong content for multiple segments** - The bulk downloader may download the same YouTube compilation for two different segments. The downloader warns about duplicates. Always verify with subtitle search.
+9. **Use ImageMagick color analysis to verify team footage programmatically**:
+   ```bash
+   ffmpeg -y -ss {timestamp} -i footage/segment_XX.mp4 -vframes 1 -q:v 2 /tmp/check.jpg
+   magick /tmp/check.jpg -resize 100x100 -colors 5 -unique-colors -format '%c' histogram:info:-
+   # Red (168,66,49) = Ferrari, Dark blue (42,44,66) = Red Bull,
+   # Silver/teal (77,89,93) = Mercedes, Green (26,46,36) = Aston Martin,
+   # Blue (35,56,81) = Alpine, Papaya (255,135,0) = McLaren
+   ```
+
+### Footage Validation (`--google-search --validate`)
+
+The footage downloader supports Google-powered search and Gemini Flash vision validation to improve footage accuracy.
+
+**How It Works:**
+1. **`--google-search`**: Uses Playwright to scrape Google Images (for `image` shots) and Google `site:youtube.com` search (for `youtube_clip` shots) before falling back to Pexels/ytsearch.
+2. **`--validate`**: Validates each candidate's YouTube thumbnail with Gemini Flash vision before downloading. Forces sequential mode.
+
+**Validation Flow:**
+```
+Image shots:  Google Images → download each → Gemini validate → accept/reject → Pexels fallback
+Video shots:  Google YouTube → ytsearch → validate thumbnails → download winner
+All fail:     Download best-confidence candidate as "unverified"
+```
+
+**Performance:**
+- Without flags: ~45s (concurrent)
+- `--google-search` only: ~60s
+- `--google-search --validate`: ~3-5min (sequential, Gemini rate limits)
+
+**Standalone Validation:**
+```bash
+python3 src/gemini_vision_validator.py --file path/to/file.mp4 --expected "Red Bull RB22 on track" --query "Red Bull F1 2026"
+python3 src/gemini_vision_validator.py --project {name}
+```
+
+**Known Limitations:**
+- Google regular search triggers CAPTCHAs; Google Images works more reliably
+- YouTube thumbnails don't always represent content at `footage_start` timestamp
+- Gemini free tier is 15 RPM — validation adds ~4s per candidate
+
+### Shot List Field Reference
+
+**Shot Fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `label` | string | yes | Human-readable shot description |
+| `text_cue` | string | yes | Exact substring of segment `text` this shot covers |
+| `source_type` | enum | yes | `youtube_clip`, `image`, `quote_overlay`, `veo3_video`, `remotion_animation`, `graphic` |
+| `footage_query` | string | for youtube_clip | YouTube search query |
+| `footage_start` | int | no | Start timestamp in source video (seconds) |
+| `footage` | string | no | Downloaded filename. Convention: `segment_XX_shot_YY.mp4` |
+| `image_query` | string | for image | Stock image search query |
+| `ken_burns` | enum | no | `zoom_in`, `zoom_out`, `pan_left`, `pan_right`. Default: random |
+| `transition_in` | enum | no | How to enter this shot. Default: `cut` |
+| `transition_duration` | float | no | Override default transition duration (seconds) |
+| `color_grade` | enum | no | `bw`, `vintage`, `cinematic`, `warm`, `cool`, `none` |
+| `speaker_name` | string | for quote_overlay | Speaker name |
+| `quote_text` | string | for quote_overlay | Quote text |
+| `duration_weight` | float | no | Override proportional timing |
+
+**Available Transitions:**
+
+| Name | FFmpeg xfade | Default Duration | When to Use |
+|------|-------------|-----------------|-------------|
+| `cut` | (none) | 0s | Default. Most shot changes. |
+| `cross_dissolve` | `fade` | 0.4s | Between related shots, topic continuity |
+| `wipe_left` | `wipeleft` | 0.3s | Topic changes, forward progression |
+| `wipe_right` | `wiperight` | 0.3s | Flashbacks, reversals |
+| `whip_pan` | `smoothleft` | 0.2s | Fast-paced, energetic transitions |
+| `fade_to_black` | `fadeblack` | 0.3s | Section endings, dramatic pauses |
+| `slide_left` | `slideleft` | 0.3s | Comparisons, before/after |
+| `circle_open` | `circleopen` | 0.4s | Reveals, dramatic openings |
+| `circle_close` | `circleclose` | 0.4s | Scene endings, closings |
+
+**Timing:** Shot timing is proportional to `text_cue` character position within segment `text`. Minimum shot duration: 1.5s (shorts), 2.0s (long-form).
+
+**Footage naming:** Multi-shot footage uses `segment_XX_shot_YY.mp4` (or `.jpg` for images). The first shot (index 0) uses the legacy `segment_XX.mp4` name for backwards compatibility.
+
+### script.json Key Fields
+
+- `visual`: Scene description for storyboard review and footage search guidance (optional)
+- `footage_start`: Timestamp (seconds) in source footage to begin extraction
+- `footage`: Downloaded filename (e.g., `segment_00.mp4`)
+- `shots`: Array of shot objects for multi-visual segments
+- `reddit_media_url`: Direct URL to Reddit media. Downloaded first by footage_downloader.
+- `reddit_media_type`: Type of Reddit media: `"image"`, `"video"`, or `"gif"`
+- `no_text`: Set to `true` to suppress text overlay (for videos with built-in graphics)
+
 ### API Keys Location
 - Gemini: `shared/creds/google_ai` (free at https://aistudio.google.com/apikey)
 - ElevenLabs (fallback): `shared/creds/elevenlabs`

@@ -57,17 +57,25 @@ Once user confirms story selection, create the daily news script:
      "segments": [
        {
          "id": 1,
-         "text": "Welcome to F1 Daily News, your sixty-second briefing on everything Formula One. It's [month] [day]. Here's what you need to know.",
-         "context": "Intro - establish daily news format",
-         "visual": "F1 2026 cars lined up on the grid or driving in formation, wide shot",
-         "footage_query": "F1 2026 cars grid formation",
-         "footage_start": 10
+         "text": "[Biggest story hook - punchy, attention-grabbing, 1-2 sentences]",
+         "context": "Hook - [story description], biggest story of the day",
+         "visual": "[Specific visual for the hook story]",
+         "footage_query": "[search query]",
+         "footage_start": 5
+       },
+       {
+         "id": 2,
+         "text": "Here's what happened in F1 in the last 24 hours.",
+         "context": "Brand moment - show logo with zoom-in, quick transition to news",
+         "visual": "F1 Burnouts logo centered on screen with fast zoom-in effect and swoosh SFX",
+         "footage": "segment_01.mp4"
        },
        // ... news segments (one per story, 1-2 sentences each) ...
+       // The first news segment CONTINUES the hook story with more detail
        {
          "id": N,
-         "text": "That's your F1 Daily News. Subscribe, hit the bell, and drop a comment with your thoughts. See you tomorrow!",
-         "context": "Outro - CTA for subscribe/like/comment (reusable)",
+         "text": "That's your daily news. Like, subscribe, and drop your thoughts in the comments. See you tomorrow!",
+         "context": "Outro - CTA",
          "visual": "High-speed F1 racing action montage, multiple cars battling on track",
          "footage_query": "F1 racing action montage",
          "footage_start": 25
@@ -77,7 +85,10 @@ Once user confirms story selection, create the daily news script:
    ```
 
 3. **Script Guidelines**:
-   - **Intro date format**: Use only month and day (e.g., "February first"), do NOT include the weekday (no "Saturday", "Monday", etc.)
+   - **Hook segment (segment 0)**: The video opens with the BIGGEST story of the day, delivered as a punchy attention-grabber. NO generic "Welcome to F1 Daily News" intro. The hook should make the viewer stop scrolling — a bold claim, a shocking quote, or a dramatic development. Example: "Max Verstappen just dropped a bombshell. He says we are close to the end of his Formula One career." The hook needs its own footage (NOT shared assets — download specific footage for the hook story).
+   - **Logo segment (segment 1)**: Always follows the hook. Pre-built assets, never regenerate.
+   - **First news segment (segment 2)**: Should CONTINUE the hook story with more details/context. This creates a satisfying payoff for the hook.
+   - **Remaining segments**: Cover the other stories, one per segment.
    - **`visual` (storyboard)**: Describe what the viewer should SEE on screen for each segment. This is NOT a search query — it describes the intended visual scene. Be specific about:
      - Subject: which car, driver, team, or object
      - Shot type: aerial, onboard, pit lane, close-up, wide shot, trackside
@@ -115,19 +126,23 @@ Once user confirms story selection, create the daily news script:
 
 ### Reusable Elements
 
-The **intro** and **outro** segments are designed to be consistent across all daily news videos:
-- Intro: "Welcome to F1 Daily News, your sixty-second briefing..."
-- Outro: "That's your F1 Daily News. Subscribe, hit the bell..."
+The **logo** and **outro** segments are consistent across all daily news videos:
+- Logo (segment 1): "Here's what happened in F1 in the last 24 hours." — Pre-built audio + video, never regenerate.
+- Outro: "That's your daily news. Like, subscribe, and drop your thoughts in the comments. See you tomorrow!"
 
-This builds brand recognition and viewer expectations.
+The **hook** (segment 0) is unique every episode — always the biggest story, with custom footage. This builds brand recognition while keeping the opening fresh and scroll-stopping.
 
 ### Shared Assets
 
-Pre-downloaded footage for consistent elements is stored in `shared/assets/daily-news/`:
-- `intro.mp4` - F1 cars/grid footage for the intro segment (segment_00)
+Pre-downloaded footage and audio for consistent elements is stored in `shared/assets/daily-news/`:
 - `outro.mp4` - F1 racing action montage for the outro segment
+- `logo_with_f1sound.mp3` - Pre-mixed logo segment audio: TTS "Here's what happened in F1 in the last twenty-four hours" + f1sound whoosh (2x speed, overlapped 1s with voice ending). Duration: 3.6s
+- `logo_zoom.mp4` - Pre-rendered logo zoom-in video (fast zoom, `zoom+0.008`, no audio track). Duration: 3.6s
+- `logo_voice.mp3` - Clean TTS voice only (no SFX), for remixing if needed. Duration: 2.58s
+- `f1sound_2x.mp3` - f1sound.mp3 0-4s at 2x speed, standalone whoosh clip. Duration: 2.0s
+- `logo.jpg` - Source logo image for regenerating zoom video if needed
 
-These assets should be copied to each new project's footage folder to avoid redundant downloads and ensure visual consistency across episodes.
+These assets should be copied to each new project's footage/audio folders to avoid redundant downloads, TTS generation, and audio mixing. The logo segment (segment_01) should NEVER be recreated from scratch — always use the pre-built assets.
 
 ### Media Sourcing Priority (Reddit-First Approach)
 
@@ -203,22 +218,25 @@ python3 src/footage_downloader.py --project {name} --google-search
 
 **Follow the `/f1-create-short` pipeline from step 5 (Download Footage) through step 14 (Verify Final Output)**, with these daily-news-specific overrides:
 
-1. **Before downloading footage**, copy shared intro/outro assets:
+1. **Before downloading footage**, copy shared logo/outro assets:
    ```bash
-   cp shared/assets/daily-news/intro.mp4 projects/f1-daily-news-{date}/footage/segment_00.mp4
+   cp shared/assets/daily-news/logo_zoom.mp4 projects/f1-daily-news-{date}/footage/segment_01.mp4
+   cp shared/assets/daily-news/logo_with_f1sound.mp3 projects/f1-daily-news-{date}/audio/segment_01.mp3
    cp shared/assets/daily-news/outro.mp4 projects/f1-daily-news-{date}/footage/segment_{outro_index}.mp4
    ```
-   The footage downloader will skip segments that already have footage files.
+   **Segment 0 (hook) needs its own footage** — do NOT copy shared assets for it. The hook is unique every episode with story-specific visuals.
+   The footage downloader will skip segments that already have footage files. The audio generator will skip segments that already have audio files. The logo segment (segment_01) is fully pre-built — no TTS generation or SFX mixing needed.
 
 2. **Set `footage` field** for ALL segments in script.json at creation time (e.g., `"footage": "segment_00.mp4"`). Pre-copied assets (intro/outro) especially need this since the footage_downloader only adds it for segments it downloads.
 
 3. **Duration target is fixed** at 60-90 seconds (not user-chosen like in general shorts).
 
-5. **Always use `--segment-transition cut` when assembling**:
+5. **Always use `--segment-transition cut --no-music` when assembling**:
    ```bash
-   python3 src/video_assembler.py --project f1-daily-news-{date} --segment-transition cut
+   python3 src/video_assembler.py --project f1-daily-news-{date} --segment-transition cut --no-music
    ```
-   The default `cross_dissolve` transition causes progressive audio-video drift: each 0.3s xfade overlap shortens the video track but not the audio, so by segment 7-8 the voiceover is ~2 seconds ahead of the visuals. Hard cuts eliminate this drift and better suit the punchy news format.
+   - `--segment-transition cut`: The default `cross_dissolve` transition causes progressive audio-video drift: each 0.3s xfade overlap shortens the video track but not the audio, so by segment 7-8 the voiceover is ~2 seconds ahead of the visuals. Hard cuts eliminate this drift and better suit the punchy news format.
+   - `--no-music`: Background music at even 4% volume competes with the f1sound whoosh in the logo segment. Daily news format is punchy enough without background music.
 
 4. **Shot list examples for daily news** -- when using multi-shot segments, common patterns include:
 
@@ -306,3 +324,43 @@ After the video is created, suggest:
 /f1-upload-short
 ```
 to upload to YouTube with appropriate daily news metadata.
+
+### Daily News Lessons
+
+1. **Hook pattern, not generic intro** — Segment 0 is always the biggest story of the day as a scroll-stopping hook, NOT a generic "Welcome to F1 Daily News" intro. The logo segment (segment 1) follows the hook, then segment 2 continues the hook story with more detail. This creates a satisfying payoff and keeps viewers watching.
+
+2. **Reddit videos with on-screen text need `no_text: true`** — When using Reddit videos that have their own text/graphics overlays (comparison videos, infographics, data visualizations), add `"no_text": true` to the segment. Otherwise our text overlay clashes with the video's built-in text and becomes unreadable.
+
+3. **Person portraits: photos beat YouTube clips** — For team principals, former drivers, and personnel (e.g., Damon Hill, Jenson Button, Claire Williams), use `source_type: "image"` with Google Images search (`--google-search` flag). YouTube clips of these people are either old race footage or interview clips that don't match the news context. Ken Burns zoom on a good portrait looks professional and clean.
+
+4. **Fandom Wiki images are unusable** — F1 Fandom Wiki serves WebP format (despite .jpg URLs) at only 300px wide. Far too small for 1080x1920 shorts. Use Google Images via the footage downloader's `--google-search` flag instead.
+
+5. **Ferrari footage needs specific channel/driver queries** — Generic queries like "Ferrari SF-26 sidepod close up" return Barcelona Highlights compilations that land on non-Ferrari content at the given timestamp. Use the official Ferrari channel (e.g., "SF-26 Fires Up") or F1 channel with driver-specific queries (e.g., "Charles Leclerc Sets The Fastest Lap Pre-Season Testing").
+
+6. **YouTube search picks wrong year — add context** — Queries for "Leclerc fastest lap Bahrain 2026" return 2022 Bahrain pole laps because yt-dlp relevance scoring doesn't distinguish years well. Always include extra context like "Pre-Season Testing", "Day 2", or the specific video series name to disambiguate from older seasons.
+
+7. **Pronunciation vs spelling in script.json** — The `text` field is used for BOTH audio generation AND text overlay. If you respell a name for pronunciation (e.g., "Laurent" → "Lorahn"), the misspelling will appear on screen. Fix: use phonetic spelling for audio generation, then restore correct spelling before video assembly. Cached MP3s won't regenerate as long as the files exist.
+
+8. **Blurred background aspect ratio fix** — The common `scale=1080:-2` for foreground in 9:16 frame causes stretching on some sources. For 16:9 (1920x1080) sources, explicitly use `scale=1080:608` to maintain correct aspect ratio.
+
+9. **Skip jittery interview cuts** — Interview footage from YouTube often has abrupt transitions at clip boundaries. Always preview the first 1-2 seconds and add offset to skip any jitter (e.g., start at 525s instead of 524s).
+
+10. **Use official team/manufacturer videos for technical topics** — For power unit, engine, or technical regulation topics, use official team channels (Mercedes "Road to 2026", Honda PU Launch) or the official F1 channel's explainer videos. Clean CGI animations work better than on-track footage for technical concepts.
+
+11. **Instagram challenge_required** — Instagram may trigger security challenges on upload. The user needs to approve login from the Instagram app before retrying.
+
+12. **Image shots use upper-zone layout** — Image shots in shorts are automatically fitted into the top 1270px of the 1080x1920 frame. The blurred background fills the full frame, and text renders below the image with no overlap. `no_text` flags are never needed on image shots.
+
+13. **Reddit media URLs get truncated by the fetcher** — `reddit_fetcher.py` output truncates the `s=` hash parameter in `preview.redd.it` URLs, causing 403 errors. Fix: fetch the post JSON directly with `curl -s -L -H "User-Agent: Mozilla/5.0" "https://www.reddit.com/r/formula1/comments/{id}/.json"` and extract full URLs with `html.unescape()`. `i.redd.it` URLs work fine.
+
+14. **Reddit images saved as .mp4 crash the single-shot path** — If a Reddit image gets saved with a `.mp4` extension, the single-shot path uses `trim=start=...` which produces zero video frames from a still image. Fix: rename to `.jpg` and use `source_type: "image"`, or split into a multi-shot segment.
+
+15. **Always QA footage content, not just existence** — The footage downloader often returns plausible but wrong content. Use `--list` after download to check video titles. Color signatures: Red (168,66,49) = Ferrari, Orange (255,128,0) = McLaren, Dark green (34,153,113) = Aston Martin, Dark blue (42,44,66) = Red Bull.
+
+16. **Text overlay uses team colors, not white** — The shorts assembler renders text in team-specific colors (e.g., Ferrari red `#E8002D`, McLaren orange `#FF8000`). Text also has a black shadow at +3px offset.
+
+17. **Never mix SFX into TTS and treat it as the original** — Always keep a clean `_clean.mp3` backup of TTS immediately after generation, before any audio mixing. The audio generator caches by file existence — if you overwrite `segment_XX.mp3` with a mixed version, it's treated as "cached" on next run.
+
+18. **f1sound.mp3 is an engine recording, not a clean whoosh** — The file at `shared/audio/f1sound.mp3` (6s, stereo) has: 0-1.1s rev-up, 1.1-2.0s peak, 2.0-3.4s Doppler tail, 3.4s+ silence. Use 0-4s at `atempo=2.0` to compress into a single perceived whoosh.
+
+19. **Overlap f1sound with voice ending for smooth transitions** — Start f1sound 1s before voice ends using `adelay=(voice_duration - 1.0) * 1000` with `amix duration=longest`. This creates a smooth crossfade instead of an abrupt voice→SFX cut.

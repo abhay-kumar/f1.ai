@@ -780,5 +780,82 @@ For long-form videos, do NOT burn subtitles into the video. Instead:
 
 ---
 
+## Long-Form Video Features
+
+- **Stock Image Approach**: Uses Pexels/Unsplash photos instead of YouTube footage
+- **Ken Burns Effects**: zoom_in, zoom_out, pan_left, pan_right for engaging motion
+- **Quote Overlays**: Auto-detects quotes and displays with speaker images
+- **4K/HD Resolution**: 3840x2160 or 1920x1080, 16:9 horizontal
+- **Higher Bitrate**: 20Mbps (4K) or 12Mbps (HD) for quality
+- **End Credits**: Auto-generated with sources/references
+- **Image Attributions**: Auto-generated file with stock photo credits
+- **No Text Overlay**: Clean footage with separate SRT for YouTube captions
+- **Reference Tracking**: Every factual claim should have a source
+- **YouTube Chapters**: Generated from section names
+- **Description with Sources**: All references included in upload
+
+---
+
+## Animated Video (Remotion)
+
+For technical explainers and data-heavy content, use Remotion for programmatic React animations synced to voiceover.
+
+### Setup
+```bash
+# Clone shared template into project
+cp -r shared/remotion-template projects/{name}/video
+cd projects/{name}/video && npm install
+```
+
+### Workflow
+```bash
+# Concatenate audio chunks for Remotion
+ffmpeg -f concat -safe 0 -i <(for f in ../audio/chunk_*.mp3; do echo "file '$(cd .. && pwd)/audio/$(basename $f)'"; done) -c:a libmp3lame -b:a 256k public/audio.mp3
+
+# Preview in browser (Remotion Studio)
+npm run dev
+
+# Quick preview render (first 3 seconds)
+npm run preview
+
+# Full HD render (1920x1080, ~15min for 17min video)
+npm run render
+
+# Background render (won't block terminal)
+nohup npx remotion render F1Video --output output/final.mp4 --codec h264 --concurrency 4 > /tmp/render.log 2>&1 &
+tail -f /tmp/render.log
+
+# 4K render
+npm run build:4k
+```
+
+### Key Files to Customize
+- `src/data/segments.ts` — Segment timing from VTT transcript, animation type mapping
+- `src/components/SegmentRenderer.tsx` — Animation router (which component for which segment)
+- `src/animations/*.tsx` — Animation components (15+ reusable, or create new ones)
+
+### Project Structure
+```
+projects/{name}/
+├── script.json
+├── audio/           # Generated voiceovers (chunk_000.mp3, ...)
+├── output/
+│   ├── transcript.vtt  # VTT timestamps (used for segment timing)
+│   └── final.mp3       # Podcast output (if dual-format)
+└── video/           # Remotion project (cloned from shared/remotion-template)
+    ├── public/
+    │   └── audio.mp3   # Concatenated audio for video
+    ├── src/
+    │   ├── data/segments.ts
+    │   ├── components/
+    │   └── animations/
+    └── output/
+        └── final.mp4
+```
+
+See `shared/remotion-template/REMOTION_GUIDE.md` for full documentation.
+
+---
+
 ## Next Step
 After the video is created, suggest the user run `/f1-upload-video` to upload to YouTube.

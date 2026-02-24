@@ -33,6 +33,7 @@ from src.config import (
     OUTPUT_HEIGHT,
     OUTPUT_WIDTH,
     SHORTS_BOTTOM_MARGIN,
+    SHORTS_IMAGE_AREA_HEIGHT,
     SHORTS_MAX_TEXT_LINES,
     VIDEO_BITRATE,
     get_project_dir,
@@ -466,6 +467,10 @@ def _create_multishot_segment(
             ):
                 shot["footage"] = segment["footage"]
 
+        # Fit image shots into upper zone so text below doesn't overlap
+        shot_image_area = (
+            SHORTS_IMAGE_AREA_HEIGHT if shot.get("source_type") == "image" else None
+        )
         success = create_shot_clip(
             shot=shot,
             clip_path=clip_path,
@@ -476,6 +481,7 @@ def _create_multishot_segment(
             is_shorts=True,
             gpu_encoder=video_encoder,
             gpu_flags=encoder_flags,
+            image_area_height=shot_image_area,
         )
 
         if success and os.path.exists(clip_path):
@@ -521,7 +527,9 @@ def _create_multishot_segment(
     # Build text caption filters
     f1_font = "/Users/abhaykumar/Documents/f1.ai/shared/fonts/Formula1-Bold.ttf"
 
-    if word_by_word:
+    if segment.get("no_text", False):
+        text_filter = "null"
+    elif word_by_word:
         text_filter = build_word_by_word_filters(
             segment["text"], audio_duration, f1_font
         )
@@ -600,11 +608,11 @@ def _create_multishot_segment(
                     y_pos = p_start_y + (i * p_lh)
 
                     if part_idx == 0:
-                        enable_cond = f"lt(t,{end_time_part:.2f})"
+                        base_enable = f"lt(t,{end_time_part:.2f})"
                     elif part_idx == len(parts) - 1:
-                        enable_cond = f"gte(t,{start_time_part:.2f})"
+                        base_enable = f"gte(t,{start_time_part:.2f})"
                     else:
-                        enable_cond = (
+                        base_enable = (
                             f"gte(t,{start_time_part:.2f})*lt(t,{end_time_part:.2f})"
                         )
 
@@ -613,14 +621,14 @@ def _create_multishot_segment(
                         f"fontfile={f1_font}:"
                         f"fontsize={p_fs}:fontcolor=black@0.5:"
                         f"x=(w-text_w)/2+3:y={y_pos}+3:"
-                        f"enable='{enable_cond}'"
+                        f"enable='{base_enable}'"
                     )
                     drawtext_filters.append(
                         f"drawtext=text='{escaped_line}':"
                         f"fontfile={f1_font}:"
                         f"fontsize={p_fs}:fontcolor={team_color}:"
                         f"x=(w-text_w)/2:y={y_pos}:"
-                        f"enable='{enable_cond}'"
+                        f"enable='{base_enable}'"
                     )
 
         if not drawtext_filters:
@@ -771,7 +779,9 @@ def create_segment_video(
     # Build text caption filters
     f1_font = "/Users/abhaykumar/Documents/f1.ai/shared/fonts/Formula1-Bold.ttf"
 
-    if word_by_word:
+    if segment.get("no_text"):
+        text_filter = "null"
+    elif word_by_word:
         text_filter = build_word_by_word_filters(
             segment["text"], audio_duration, f1_font
         )

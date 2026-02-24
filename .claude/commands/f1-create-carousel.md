@@ -142,17 +142,16 @@ For slides that reference images:
    - Download and save to `projects/{name}/images/`
    - Note: Fandom serves WebP despite .jpg URLs — convert with: `ffmpeg -y -i input.webp output.jpg`
 
-3. **Stock images**: For generic backgrounds, search Pexels:
-   ```bash
-   python3 -c "from src.stock_image_fetcher import search_pexels; results = search_pexels('query'); print(results[0]['url'])" 
-   ```
+3. **Auto-sourced by generator**: The carousel generator auto-sources background images via Google Images for all slides that don't have a `background_image` set. This runs automatically — no manual image sourcing needed for most carousels. Use `--no-images` to skip auto-sourcing for offline/fast iteration.
 
 4. **No image needed**: `content`, `content_stat`, and `content_quote` (without portrait) work great without images. Don't force images where they're not needed.
+
+5. **Never use Pexels for carousel backgrounds** — Pexels returns generic stock photos that are semantically similar but contextually wrong (e.g. a random party for "McLaren's Civil War"). Google Images returns actual F1/topic-specific photos. The carousel generator uses Google Images exclusively.
 
 #### Phase 5: Generate Slides
 
 ```bash
-# Generate all slides
+# Generate all slides (auto-sources background images via Google Images)
 python3 src/carousel_generator.py --project {name}
 
 # Preview plan without generating
@@ -163,9 +162,33 @@ python3 src/carousel_generator.py --project {name} --slide 3
 
 # Override theme
 python3 src/carousel_generator.py --project {name} --theme breaking
+
+# Skip auto image sourcing (solid backgrounds only)
+python3 src/carousel_generator.py --project {name} --no-images
 ```
 
-After generation, present the output file paths to the user. They should review the generated images.
+After generation, **validate all background images with Gemini Vision** before presenting to the user:
+
+```bash
+python3 -c "
+from src.gemini_vision_validator import validate_shot
+# For each slide's source image:
+is_match, confidence, reason = validate_shot(
+    'projects/{name}/images/bg_slide_NN.jpg',
+    'Expected content description',
+    'search query used'
+)
+print(f'Slide N: {\"MATCH\" if is_match else \"MISMATCH\"} ({confidence:.2f}) - {reason}')
+"
+```
+
+For any MISMATCH images:
+1. Re-source with a more targeted Google Images query
+2. Replace the image in `images/`
+3. Regenerate just that slide with `--slide N`
+4. Re-validate the new image
+
+Only present slides to the user once all images pass validation.
 
 If slides need revision:
 - Edit the specific slide in `script.json`
@@ -214,6 +237,22 @@ Present to the user:
 - **Avoid clickbait without payoff** — The content must deliver on the cover slide's promise
 - **Use `\n` for vertical lists** — Steps, bullet points, numbered lists in `body` text should use `\n` for line breaks, not inline sentences
 - **Max 10 slides** — Instagram limit. Plan for 8 content + 1 cover + 1 auto-CTA = 10
+
+### Image Sourcing Lessons
+
+1. **Always set `image_query` on every slide** — The auto-derived queries from heading/body text often produce terrible results (e.g., heading "2025 Had Everything" becomes query "2025 Everything" which returns abstract art). Always add an explicit `image_query` field to every slide in script.json with a specific, descriptive search query like "Norris Piastri McLaren F1 2025 battle".
+
+2. **Validate all images with Gemini Vision after generation** — Don't rely on visual inspection alone. Run `gemini_vision_validator.py` on every `images/bg_slide_*.jpg` to programmatically verify contextual relevance. This catches subtle mismatches (wrong era, wrong team, generic stock photos). Target 100% MATCH rate before presenting to user.
+
+3. **Use action-specific image queries, not topic summaries** — "McLaren team orders controversy" finds relevant on-track photos. "McLaren's Civil War Was Barely Shown" (the heading) finds irrelevant results. The `image_query` should describe what you want to SEE, not the editorial point being made.
+
+4. **Don't source portraits for fictional/non-person speakers** — "Netflix Narrator" is not a real person. Google will return random people. Only use speaker portraits for real, identifiable people (team principals, drivers, journalists).
+
+5. **Run the generator with `/usr/bin/env -i`** — Playwright has asyncio event loop conflicts when run from certain environments (e.g., Claude Code's Bash tool). Always use: `/usr/bin/env -i HOME="$HOME" PATH="$PATH" TERM="$TERM" python3 src/carousel_generator.py --project {name}` for a clean subprocess.
+
+6. **Re-source individually, not in bulk** — When an image fails validation, download a replacement with a more targeted query, swap just that file in `images/`, and regenerate with `--slide N`. Don't regenerate all slides — it's slow and risks breaking slides that were already good.
+
+7. **Prefer on-track/action shots over portraits** — For content slides about driver rivalries or race incidents, on-track racing photos are more visually compelling than posed portraits and pass Gemini validation more reliably.
 
 ### Meme Slides
 
