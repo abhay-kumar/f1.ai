@@ -117,19 +117,35 @@ def _get_font_css():
 _logo_data_uri_cache = None
 
 
+def _image_to_data_uri(path: str) -> str:
+    """Convert a local image file to a base64 data URI string.
+
+    Returns 'data:{mime};base64,...' on success, or '' on failure.
+    """
+    if not path or not os.path.exists(path):
+        return ""
+    try:
+        ext = path.rsplit(".", 1)[-1].lower()
+        mime = {
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "png": "image/png",
+            "webp": "image/webp",
+        }.get(ext, "image/jpeg")
+        with open(path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode("ascii")
+        return f"data:{mime};base64,{b64}"
+    except Exception:
+        return ""
+
+
 def _get_logo_data_uri():
     """Read logo as base64 data URI."""
     global _logo_data_uri_cache
     if _logo_data_uri_cache is not None:
         return _logo_data_uri_cache
 
-    if os.path.exists(LOGO_PATH):
-        with open(LOGO_PATH, "rb") as f:
-            b64 = base64.b64encode(f.read()).decode("ascii")
-        _logo_data_uri_cache = f"data:image/png;base64,{b64}"
-    else:
-        _logo_data_uri_cache = ""
-
+    _logo_data_uri_cache = _image_to_data_uri(LOGO_PATH)
     return _logo_data_uri_cache
 
 
@@ -278,6 +294,168 @@ def detect_theme(script: dict) -> str:
 
 
 # ============================================================================
+# AUTO IMAGE SOURCING
+# ============================================================================
+
+_STOPWORDS = {
+    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "shall", "can", "to", "of", "in", "for",
+    "on", "with", "at", "by", "from", "as", "into", "through", "during",
+    "before", "after", "above", "below", "between", "out", "off", "over",
+    "under", "again", "further", "then", "once", "here", "there", "when",
+    "where", "why", "how", "all", "each", "every", "both", "few", "more",
+    "most", "other", "some", "such", "no", "nor", "not", "only", "own",
+    "same", "so", "than", "too", "very", "just", "about", "up", "it",
+    "its", "and", "but", "or", "if", "this", "that", "these", "those",
+    "what", "which", "who", "whom", "he", "she", "they", "we", "you",
+    "your", "his", "her", "their", "our", "my", "me", "him", "them", "us",
+    "swipe", "find", "didn't", "don't", "know", "things", "didn't",
+}
+
+
+def _derive_image_query(slide: dict, theme_name: str) -> str:
+    """Derive a Google Images search query from slide content.
+
+    Prefers explicit `image_query` field if set in the slide. Otherwise
+    extracts keywords from slide text content.
+
+    Returns a short query string (4-5 words max) or '' if not derivable.
+    """
+    # Explicit override takes priority
+    if slide.get("image_query"):
+        return slide["image_query"]
+
+    slide_type = slide.get("type", "content")
+
+    if slide_type == "cover":
+        text = slide.get("headline", "")
+    elif slide_type == "content":
+        text = slide.get("heading", "") or slide.get("body", "")[:80]
+    elif slide_type == "content_stat":
+        text = slide.get("label", "")
+    elif slide_type == "content_quote":
+        # For quotes, prefer speaker context for background image
+        text = slide.get("role", "") + " " + slide.get("speaker", "")
+    else:
+        return ""
+
+    # Strip stopwords and limit to 4-5 meaningful words
+    words = [w for w in text.split() if w.lower().strip(".,!?'\"()") not in _STOPWORDS]
+    words = [w.strip(".,!?'\"()") for w in words if len(w.strip(".,!?'\"()")) > 1]
+
+    if not words:
+        return ""
+
+    query_words = words[:5]
+
+    # Add F1 context if theme is a team name and not already present
+    f1_terms = {"f1", "formula", "racing", "motorsport", "grand", "prix"}
+    has_f1 = any(w.lower() in f1_terms for w in query_words)
+    team_themes = {
+        "ferrari", "redbull", "mercedes", "mclaren", "aston_martin",
+        "alpine", "williams", "haas", "cadillac", "audi",
+    }
+    if theme_name in team_themes and not has_f1:
+        query_words.append("F1")
+
+    return " ".join(query_words)
+
+
+def _auto_source_images(project_dir: str, slides: list, theme_name: str) -> list:
+    """Auto-source background images for slides that don't already have one.
+
+    Downloads from Pexels (primary) with Google Images fallback.
+    For quote slides, also auto-sources speaker portraits.
+    Skips content_meme and content_image types.
+
+    Returns list of attribution strings for sourced images.
+    """
+    images_dir = os.path.join(project_dir, "images")
+    os.makedirs(images_dir, exist_ok=True)
+    attributions = []
+    cached_count = 0
+
+    # Lazy imports — only pay cost when auto-sourcing is used
+    try:
+        from src.google_image_search import download_image_url, search_google_images
+    except ImportError:
+        print("  Warning: google_image_search not available, skipping auto-source")
+        return attributions, cached_count
+
+    # Portrait sourcing uses stock_image_fetcher's get_person_image (which itself
+    # uses Google Images internally, with Wikipedia/Fandom dict as priority)
+    try:
+        from src.stock_image_fetcher import get_person_image
+    except ImportError:
+        get_person_image = None
+
+    skip_types = {"content_meme", "content_image"}
+
+    for i, slide in enumerate(slides):
+        slide_type = slide.get("type", "content")
+        if slide_type in skip_types:
+            continue
+
+        # --- Background image ---
+        if not slide.get("background_image"):
+            query = _derive_image_query(slide, theme_name)
+            if not query:
+                continue
+
+            dest = os.path.join(images_dir, f"bg_slide_{i + 1:02d}.jpg")
+
+            if os.path.exists(dest) and os.path.getsize(dest) > 1000:
+                slide["background_image"] = dest
+                cached_count += 1
+                print(f"  Slide {i + 1}: using cached {os.path.basename(dest)}")
+                continue
+
+            print(f"  Slide {i + 1}: searching '{query}'...")
+
+            # Google Images — contextually relevant results
+            found = False
+            try:
+                results = search_google_images(query, max_results=5)
+                for r in results:
+                    success, err = download_image_url(r["url"], dest)
+                    if success and os.path.exists(dest) and os.path.getsize(dest) > 1000:
+                        attributions.append(f"Slide {i + 1}: Image from Google Images")
+                        slide["background_image"] = dest
+                        print(f"    -> Google Images ({r.get('width', '?')}x{r.get('height', '?')})")
+                        found = True
+                        break
+            except Exception as e:
+                print(f"    Google Images error: {e}")
+
+            if not found:
+                print(f"    No image found for slide {i + 1}")
+
+        # --- Speaker portrait for quote slides ---
+        if slide_type == "content_quote" and not slide.get("speaker_image"):
+            speaker = slide.get("speaker", "")
+            if speaker and get_person_image:
+                portrait_dest = os.path.join(images_dir, f"portrait_slide_{i + 1:02d}.jpg")
+                if os.path.exists(portrait_dest) and os.path.getsize(portrait_dest) > 1000:
+                    slide["speaker_image"] = portrait_dest
+                    print(f"  Slide {i + 1}: using cached portrait")
+                    continue
+                print(f"  Slide {i + 1}: searching portrait for '{speaker}'...")
+                try:
+                    success, path = get_person_image(
+                        speaker, portrait_dest, use_google=True
+                    )
+                    if success and path:
+                        slide["speaker_image"] = path
+                        attributions.append(f"Slide {i + 1}: Portrait of {speaker}")
+                        print(f"    -> Portrait found")
+                except Exception as e:
+                    print(f"    Portrait search error: {e}")
+
+    return attributions, cached_count
+
+
+# ============================================================================
 # BASE CSS
 # ============================================================================
 
@@ -323,20 +501,16 @@ def _render_cover(slide: dict, theme: dict) -> str:
     subheadline = _escape_html(slide.get("subheadline", ""))
     bg_image = slide.get("background_image", "")
 
-    bg_style = ""
-    if bg_image and os.path.exists(bg_image):
-        with open(bg_image, "rb") as f:
-            ext = bg_image.rsplit(".", 1)[-1].lower()
-            mime = {
-                "jpg": "image/jpeg",
-                "jpeg": "image/jpeg",
-                "png": "image/png",
-                "webp": "image/webp",
-            }.get(ext, "image/jpeg")
-            b64 = base64.b64encode(f.read()).decode("ascii")
+    bg_data_uri = _image_to_data_uri(bg_image)
+
+    if bg_data_uri:
+        # Radial vignette: image visible in center (25% opacity), darker edges (60%)
+        # plus bottom darkening strip for subheadline readability
         bg_style = f"""
-            background-image: linear-gradient(135deg, {theme["bg"]}ee 0%, {theme["primary"]}aa 50%, {theme["bg"]}dd 100%),
-                              url('data:{mime};base64,{b64}');
+            background-image:
+                radial-gradient(ellipse at center, {theme["bg"]}40 0%, {theme["bg"]}99 70%, {theme["bg"]}dd 100%),
+                linear-gradient(to top, {theme["bg"]}cc 0%, transparent 35%),
+                url('{bg_data_uri}');
             background-size: cover;
             background-position: center;
         """
@@ -369,7 +543,7 @@ def _render_cover(slide: dict, theme: dict) -> str:
         color: var(--text);
         text-transform: uppercase;
         margin-bottom: 24px;
-        text-shadow: 0 2px 20px rgba(0,0,0,0.5);
+        text-shadow: 0 2px 20px rgba(0,0,0,0.7), 0 0 40px rgba(0,0,0,0.5);
     }}
     .headline span {{
         color: var(--primary);
@@ -380,6 +554,7 @@ def _render_cover(slide: dict, theme: dict) -> str:
         color: var(--text);
         opacity: 0.8;
         letter-spacing: 1px;
+        text-shadow: 0 1px 10px rgba(0,0,0,0.5);
     }}
     .swipe {{
         position: absolute;
@@ -422,20 +597,13 @@ def _render_content(slide: dict, theme: dict) -> str:
     body = _escape_html(slide.get("body", ""), preserve_newlines=True)
     bg_image = slide.get("background_image", "")
 
-    bg_css = ""
-    if bg_image and os.path.exists(bg_image):
-        with open(bg_image, "rb") as f:
-            ext = bg_image.rsplit(".", 1)[-1].lower()
-            mime = {
-                "jpg": "image/jpeg",
-                "jpeg": "image/jpeg",
-                "png": "image/png",
-                "webp": "image/webp",
-            }.get(ext, "image/jpeg")
-            b64 = base64.b64encode(f.read()).decode("ascii")
+    bg_data_uri = _image_to_data_uri(bg_image)
+
+    if bg_data_uri:
+        # Top-light gradient: image peeking through at top (40%), text-safe at bottom (87%)
         bg_css = f"""
-            background-image: linear-gradient(180deg, {theme["bg"]}f0 0%, {theme["bg"]}cc 60%, {theme["bg"]}f0 100%),
-                              url('data:{mime};base64,{b64}');
+            background-image: linear-gradient(180deg, {theme["bg"]}66 0%, {theme["bg"]}aa 40%, {theme["bg"]}dd 65%, {theme["bg"]}ee 100%),
+                              url('{bg_data_uri}');
             background-size: cover;
             background-position: center;
         """
@@ -481,6 +649,7 @@ def _render_content(slide: dict, theme: dict) -> str:
         color: var(--text);
         text-transform: uppercase;
         margin-bottom: 24px;
+        text-shadow: 0 2px 12px rgba(0,0,0,0.6);
     }}
     .body {{
         font-family: 'F1Regular', sans-serif;
@@ -488,6 +657,7 @@ def _render_content(slide: dict, theme: dict) -> str:
         line-height: 1.6;
         color: var(--text);
         opacity: 0.85;
+        text-shadow: 0 1px 8px rgba(0,0,0,0.4);
     }}
     .side-stripe {{
         position: absolute;
@@ -509,29 +679,35 @@ def _render_content(slide: dict, theme: dict) -> str:
 
 
 def _render_content_quote(slide: dict, theme: dict) -> str:
-    """Quote slide with large quotation marks."""
+    """Quote slide with large quotation marks and optional background image."""
     quote = _escape_html(slide.get("quote", ""))
     speaker = _escape_html(slide.get("speaker", ""))
     role = _escape_html(slide.get("role", ""))
     speaker_image = slide.get("speaker_image", "")
+    bg_image = slide.get("background_image", "")
 
     portrait_html = ""
-    if speaker_image and os.path.exists(speaker_image):
-        with open(speaker_image, "rb") as f:
-            ext = speaker_image.rsplit(".", 1)[-1].lower()
-            mime = {
-                "jpg": "image/jpeg",
-                "jpeg": "image/jpeg",
-                "png": "image/png",
-                "webp": "image/webp",
-            }.get(ext, "image/jpeg")
-            b64 = base64.b64encode(f.read()).decode("ascii")
-        portrait_html = f'<img class="portrait" src="data:{mime};base64,{b64}" />'
+    portrait_data_uri = _image_to_data_uri(speaker_image)
+    if portrait_data_uri:
+        portrait_html = f'<img class="portrait" src="{portrait_data_uri}" />'
+
+    bg_data_uri = _image_to_data_uri(bg_image)
+    if bg_data_uri:
+        # Radial tint: moody background visible through center (47%), darker edges (73%)
+        bg_css = f"""
+            background-image:
+                radial-gradient(ellipse at center, {theme["bg"]}78 0%, {theme["bg"]}bb 65%, {theme["bg"]}dd 100%),
+                url('{bg_data_uri}');
+            background-size: cover;
+            background-position: center;
+        """
+    else:
+        bg_css = f"background: {theme['bg']};"
 
     return f"""<!DOCTYPE html><html><head><style>
     {_base_css(theme)}
     .slide {{
-        background: {theme["bg"]};
+        {bg_css}
         justify-content: center;
         align-items: center;
         padding: 70px 60px;
@@ -553,6 +729,7 @@ def _render_content_quote(slide: dict, theme: dict) -> str:
         font-style: italic;
         margin-bottom: 30px;
         max-width: 900px;
+        text-shadow: 0 2px 12px rgba(0,0,0,0.6);
     }}
     .attribution {{
         display: flex;
@@ -573,12 +750,14 @@ def _render_content_quote(slide: dict, theme: dict) -> str:
         font-size: 22px;
         color: var(--primary);
         text-transform: uppercase;
+        text-shadow: 0 1px 8px rgba(0,0,0,0.5);
     }}
     .role {{
         font-family: 'F1Regular', sans-serif;
         font-size: 16px;
         color: var(--text);
         opacity: 0.6;
+        text-shadow: 0 1px 6px rgba(0,0,0,0.4);
     }}
     .accent-line {{
         width: 50px;
@@ -601,14 +780,28 @@ def _render_content_quote(slide: dict, theme: dict) -> str:
 
 
 def _render_content_stat(slide: dict, theme: dict) -> str:
-    """Big statistic callout slide."""
+    """Big statistic callout slide with optional background image."""
     stat = _escape_html(slide.get("stat", ""))
     label = _escape_html(slide.get("label", ""))
+    bg_image = slide.get("background_image", "")
+
+    bg_data_uri = _image_to_data_uri(bg_image)
+    if bg_data_uri:
+        # Radial vignette: subtle texture visible center (53%), stat number dominates
+        bg_css = f"""
+            background-image:
+                radial-gradient(ellipse at center, {theme["bg"]}88 0%, {theme["bg"]}cc 55%, {theme["bg"]}ee 100%),
+                url('{bg_data_uri}');
+            background-size: cover;
+            background-position: center;
+        """
+    else:
+        bg_css = f"background: {theme['bg']};"
 
     return f"""<!DOCTYPE html><html><head><style>
     {_base_css(theme)}
     .slide {{
-        background: {theme["bg"]};
+        {bg_css}
         justify-content: center;
         align-items: center;
         text-align: center;
@@ -620,7 +813,7 @@ def _render_content_stat(slide: dict, theme: dict) -> str:
         color: var(--primary);
         line-height: 1;
         margin-bottom: 24px;
-        text-shadow: 0 0 60px {theme["primary"]}44;
+        text-shadow: 0 0 60px {theme["primary"]}44, 0 2px 20px rgba(0,0,0,0.6);
     }}
     .label {{
         font-family: 'F1Regular', sans-serif;
@@ -629,6 +822,7 @@ def _render_content_stat(slide: dict, theme: dict) -> str:
         color: var(--text);
         opacity: 0.8;
         max-width: 700px;
+        text-shadow: 0 1px 8px rgba(0,0,0,0.4);
     }}
     .divider {{
         width: 60px;
@@ -662,22 +856,15 @@ def _render_content_image(slide: dict, theme: dict) -> str:
     heading = _escape_html(slide.get("heading", ""))
     bg_image = slide.get("background_image", "")
 
-    bg_css = f"background: {theme['bg']};"
-    if bg_image and os.path.exists(bg_image):
-        with open(bg_image, "rb") as f:
-            ext = bg_image.rsplit(".", 1)[-1].lower()
-            mime = {
-                "jpg": "image/jpeg",
-                "jpeg": "image/jpeg",
-                "png": "image/png",
-                "webp": "image/webp",
-            }.get(ext, "image/jpeg")
-            b64 = base64.b64encode(f.read()).decode("ascii")
+    bg_data_uri = _image_to_data_uri(bg_image)
+    if bg_data_uri:
         bg_css = f"""
-            background-image: url('data:{mime};base64,{b64}');
+            background-image: url('{bg_data_uri}');
             background-size: cover;
             background-position: center;
         """
+    else:
+        bg_css = f"background: {theme['bg']};"
 
     return f"""<!DOCTYPE html><html><head><style>
     {_base_css(theme)}
@@ -686,7 +873,7 @@ def _render_content_image(slide: dict, theme: dict) -> str:
         justify-content: flex-end;
     }}
     .overlay {{
-        background: linear-gradient(0deg, {theme["bg"]}ee 0%, {theme["bg"]}cc 40%, transparent 100%);
+        background: linear-gradient(0deg, {theme["bg"]}ee 0%, {theme["bg"]}bb 35%, {theme["bg"]}44 65%, transparent 100%);
         padding: 60px;
         padding-top: 120px;
     }}
@@ -830,17 +1017,9 @@ def _render_content_meme(slide: dict, theme: dict) -> str:
     panel_right_img = slide.get("panel_right_image", "")
 
     def _img_tag(path, fallback_text):
-        if path and os.path.exists(path):
-            with open(path, "rb") as f:
-                ext = path.rsplit(".", 1)[-1].lower()
-                mime = {
-                    "jpg": "image/jpeg",
-                    "jpeg": "image/jpeg",
-                    "png": "image/png",
-                    "webp": "image/webp",
-                }.get(ext, "image/jpeg")
-                b64 = base64.b64encode(f.read()).decode("ascii")
-            return f'<img class="panel-img" src="data:{mime};base64,{b64}" />'
+        data_uri = _image_to_data_uri(path)
+        if data_uri:
+            return f'<img class="panel-img" src="{data_uri}" />'
         return f'<div class="panel-placeholder">{fallback_text}</div>'
 
     left_html = _img_tag(panel_left_img, panel_left_label)
@@ -1049,7 +1228,10 @@ def render_slide(html: str, output_path: str) -> bool:
 
 
 def generate_carousel(
-    project_name: str, theme_override: str = None, single_slide: int = None
+    project_name: str,
+    theme_override: str = None,
+    single_slide: int = None,
+    auto_source: bool = True,
 ) -> list:
     """Generate carousel slide images from script.json.
 
@@ -1057,6 +1239,7 @@ def generate_carousel(
         project_name: Project directory name
         theme_override: Override auto-detected theme
         single_slide: If set, only regenerate this slide number (1-indexed)
+        auto_source: If True, auto-download images for slides without background_image
 
     Returns:
         List of generated slide file paths
@@ -1088,8 +1271,30 @@ def generate_carousel(
     theme = THEMES.get(theme_name, THEMES["dramatic"])
     print(f"Theme: {theme_name}")
 
-    # Resolve image paths
+    # Resolve image paths (explicit URLs and local paths)
     slides = _resolve_images(project_dir, slides)
+
+    # Auto-source images for slides missing backgrounds
+    attributions = []
+    if auto_source:
+        print("\nAuto-sourcing images...")
+        attributions, cached = _auto_source_images(project_dir, slides, theme_name)
+        parts = []
+        if attributions:
+            parts.append(f"sourced {len(attributions)} new")
+        if cached:
+            parts.append(f"reused {cached} cached")
+        if parts:
+            print(f"  Images: {', '.join(parts)}")
+        else:
+            print("  No images needed or found")
+
+        # Close Google Images browser so the renderer can start its own Playwright
+        try:
+            from src.google_image_search import _cleanup_browser as _cleanup_gis
+            _cleanup_gis()
+        except Exception:
+            pass
 
     # Add CTA as last slide
     total_slides = len(slides) + 1  # +1 for CTA
@@ -1142,6 +1347,16 @@ def generate_carousel(
             generated.append(cta_path)
         else:
             print(f"    -> FAILED")
+
+    # Write image attributions if any images were sourced
+    if attributions:
+        attr_path = os.path.join(output_dir, "image_attributions.txt")
+        with open(attr_path, "w") as f:
+            f.write("Image Attributions\n")
+            f.write("=" * 40 + "\n\n")
+            for attr in attributions:
+                f.write(f"{attr}\n")
+        print(f"\nAttributions: {attr_path}")
 
     print(f"\nDone! {len(generated)}/{total_slides} slides generated in {output_dir}/")
     return generated
@@ -1196,6 +1411,11 @@ def main():
     parser.add_argument(
         "--list", action="store_true", help="Preview slide plan without generating"
     )
+    parser.add_argument(
+        "--no-images",
+        action="store_true",
+        help="Skip auto-sourcing background images (solid backgrounds only)",
+    )
     args = parser.parse_args()
 
     print("=" * 50)
@@ -1210,6 +1430,7 @@ def main():
         args.project,
         theme_override=args.theme,
         single_slide=args.slide,
+        auto_source=not args.no_images,
     )
 
     if not result:

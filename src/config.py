@@ -45,6 +45,11 @@ SHORTS_BOTTOM_MARGIN = 320
 # With 320px bottom margin, 5 lines fits comfortably in the safe zone
 SHORTS_MAX_TEXT_LINES = 5
 
+# Image area height for shorts - images are fitted into this upper zone
+# so text below never overlaps the image content.
+# 1270px leaves room for ~5 lines of text + 320px YouTube safe zone at bottom.
+SHORTS_IMAGE_AREA_HEIGHT = 1270
+
 # Audio Pace Config
 SHORTS_AUDIO_SPEED = 1.25  # 25% faster for punchy short-form delivery
 

@@ -103,9 +103,35 @@ projects/{project-name}/
 
 1. **Parse Topics**: Extract the topics/synopsis from `$ARGUMENTS`
 
-2. **Research** (if needed): Search web for recent facts, quotes, technical details
+2. **Review Previous Episodes** (REQUIRED): Build continuity with past episodes.
+   - Fetch the RSS feed at `https://media.rss.com/f1-burnouts/feed.xml` using WebFetch to get episode list and transcript URLs
+   - Fetch transcripts from the most recent 2-3 episodes (transcript URLs follow pattern `https://transcripts.rss.com/368455/{id}/transcript`)
+   - Build a **"Previously Covered" summary** noting:
+     - Key topics already discussed in depth — don't re-explain them, reference them: "As we covered in last week's episode...", "Remember when we talked about..."
+     - Running jokes, catchphrases, or narrative threads worth continuing
+     - Predictions made that can now be revisited with new data ("Remember when I predicted X? Well...")
+     - Hot takes from previous episodes that new facts might confirm or contradict
+   - Use this context to:
+     - **Reference back** naturally 1-2 times per episode ("If you caught last week's episode...", "We ranked the teams last week and...")
+     - **Avoid repetition** — if a topic was covered in depth previously (e.g., active aero basics in Episode 3, fuel revolution in Episode 1), don't re-explain it. Instead, build on it with what's NEW
+     - **Continue narratives** — pick up threads (e.g., if Aston Martin was ranked last in the Week 1 episode, reference that ranking when discussing their Week 2 performance)
 
-3. **Generate Script**: Create `script.json` with this podcast format:
+3. **Research F1 Media Commentary** (REQUIRED): Find what pundits and media are saying about this episode's topics.
+   - Web search for commentary from **Sky Sports F1, The Race, Autosport, PlanetF1, GPFans, and Motorsport.com** on the episode's topics
+   - Look specifically for:
+     - **Controversial opinions** or active debates between pundits (e.g., Brundle vs Croft, different analyst predictions)
+     - **Hot takes** that the host can agree with, push back on, or riff off
+     - **Interesting quotes** from team principals, drivers, engineers, or analysts that can be woven in naturally
+     - **Under-reported angles** that mainstream coverage is missing but the host can spotlight
+   - Build a **"Media Talking Points"** list (aim for 3-5 points) to weave into the script:
+     - "Martin Brundle made an interesting point on Sky — he said X, and honestly, I think he's spot on / completely wrong because..."
+     - "There's a debate raging on The Race about whether..."
+     - "Damon Hill predicted X — and I've got to say, that's either genius or delusional..."
+   - Attribute sources naturally in speech (never "quote... end quote" — see quoting guidelines below)
+
+4. **Research Current Facts** (if needed): Search web for recent facts, statistics, technical details, and quotes specific to the episode's topics
+
+5. **Generate Script**: Create `script.json` with this podcast format:
    ```json
    {
      "title": "Podcast Episode Title",
@@ -134,7 +160,7 @@ projects/{project-name}/
    }
    ```
 
-4. **Script Guidelines - MAKING IT ENGAGING**:
+6. **Script Guidelines - MAKING IT ENGAGING**:
 
    **STORYTELLING & INTRIGUE**:
    - Hook the audience in the first 10 seconds with something surprising or provocative
@@ -177,6 +203,19 @@ projects/{project-name}/
    - Historical context: Connect current events to F1 history
    - Balanced criticism: Praise AND critique where deserved (including McLaren)
    - Hot takes: Don't be afraid to have strong opinions (but defend them)
+
+   **PREVIOUS EPISODE CONTINUITY** (from Step 2 research):
+   - Reference previous episodes naturally 1-2 times: "If you caught last week's episode...", "We ranked the teams last week and...", "Remember when I predicted..."
+   - Don't re-explain topics covered in depth previously — build on them with what's NEW
+   - Continue running narratives across episodes (e.g., team rankings, prediction tracking)
+   - Revisit past predictions with new data: "I said X would happen — and guess what..."
+
+   **MEDIA COMMENTARY INTEGRATION** (from Step 3 research):
+   - Weave in 2-3 pundit opinions or hot takes as natural conversation points
+   - Agree, disagree, or riff off them: "Brundle made an interesting point — he said X, and I think he's absolutely right / completely wrong because..."
+   - Use media debates as segment hooks: "There's a debate raging right now about whether..."
+   - Attribute sources conversationally, never robotically
+   - Use under-reported angles from media research to offer unique value listeners can't get elsewhere
    
    **STRUCTURE**:
    - **Target duration**: ~20 minutes (approximately 3000-3500 words total)
@@ -184,7 +223,7 @@ projects/{project-name}/
    - Vary segment lengths - not everything needs equal time
    - End strong - the last impression matters
 
-5. **Writing for Gemini TTS with SSML**:
+7. **Writing for Gemini TTS with SSML**:
 
    The `ssml_generator.py` will automatically enhance your script, but write with these features in mind:
 
@@ -222,7 +261,7 @@ projects/{project-name}/
    - Strong: incredible, billion, never, first, championship, zero
    - Moderate: actually, crucial, exactly, really
 
-6. **Emotional Markers** (segment metadata for SSML enhancement):
+8. **Emotional Markers** (segment metadata for SSML enhancement):
    
    | Emotion | Use For | Gemini Marker | Prosody |
    |---------|---------|---------------|---------|
@@ -235,14 +274,14 @@ projects/{project-name}/
    | `serious` | Critical analysis, concerns | `[serious]` | Slow, lower pitch |
    | `passionate` | Advocacy, engineering appreciation | `[passionate]` | Fast, high energy |
 
-7. **CHECKPOINT - Script Review**:
+9. **CHECKPOINT - Script Review**:
    - Present the complete script to the user
    - Show all segments with text, context, and emotion
    - Display estimated duration based on word count (~150 words/minute)
    - **STOP and wait for user approval**
    - Make any requested changes before proceeding
 
-8. **Generate Audio & Add Music**:
+10. **Generate Audio & Add Music**:
    ```bash
    # Step 1: Generate podcast audio (CHUNKED MODE - prevents voice degradation)
    python3 src/gemini_podcast_audio_generator.py --project {name} --chunked
@@ -272,7 +311,7 @@ projects/{project-name}/
    - `--documentary` - Clean intro/outro only (recommended)
    - `--dry-run` - Preview music placement
 
-9. **Verify Output**:
+11. **Verify Output**:
    - Check total duration matches expectations
    - Ensure smooth transitions between segments
    - Report final audio location
@@ -425,6 +464,8 @@ Before generating audio, verify the script has:
 - [ ] Rhetorical questions that engage the listener
 - [ ] A heartfelt or reflective moment somewhere
 - [ ] McLaren reference(s) that are self-aware
+- [ ] References at least one previous episode naturally (continuity)
+- [ ] Includes at least 2 media commentary points (agree/disagree with pundits)
 - [ ] A strong closing that makes people want more
 - [ ] Proper use of punctuation for pacing (... — !)
 - [ ] Inline emotion markers for key delivery moments
@@ -450,9 +491,36 @@ python3 src/gemini_podcast_audio_generator.py --project {name} --chunked
 - Single-request mode (default) for long podcasts
 - Legacy segment-by-segment mode (`--legacy`)
 
+### Gemini TTS Ad-Lib Fix
+
+**Problem**: Gemini TTS sometimes generates extra speech beyond the script text in the last chunk (e.g., an improvised sign-off or repeated content). This results in unwanted voiceover during the outro music.
+
+**Detection**: After generating audio, check the last chunk for suspicious trailing content:
+```bash
+ffmpeg -i projects/{name}/audio/chunk_NNN.mp3 -af "silencedetect=noise=-28dB:d=0.3" -f null - 2>&1 | grep silence | tail -5
+```
+If there's a silence gap in the last ~15s followed by more speech, Gemini ad-libbed.
+
+**Fix**: Trim the last chunk at the silence gap before the ad-lib:
+```bash
+ffmpeg -y -i projects/{name}/audio/chunk_NNN.mp3 -t {cut_point} -c:a libmp3lame -b:a 256k projects/{name}/audio/chunk_NNN.mp3
+```
+Then re-run the audio generator (it will use cached chunks) and the music mixer.
+
+**Alternative**: Delete the last chunk and re-run the generator. Gemini doesn't always ad-lib — regenerating often produces a clean take.
+
 ### Local TTS Alternative (Not Recommended for Podcasts)
 
 Qwen3-TTS 1.7B with MLX (`src/qwen_podcast_audio_generator.py`) is available but:
 - Produces more robotic output compared to Gemini
 - No SSML support - uses `instruct` parameter instead
 - Better suited for sleep/meditation content, not energetic podcasts
+
+### Podcast Music Details
+
+Default track: `shared/music/podcast_default.mp3` (symlink to `f1_invincible.mp3`)
+
+Music placement:
+- **Intro**: 0-12s at 80% volume, fades as voice starts
+- **Content**: Pure voice, no background music
+- **Outro**: Last 10s, music swells from 25% to 70% after voice ends

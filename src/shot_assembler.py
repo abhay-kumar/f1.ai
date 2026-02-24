@@ -407,12 +407,17 @@ def create_kenburns_clip(
     effect: str = "zoom_in",
     gpu_encoder: str = "h264_videotoolbox",
     gpu_flags: list = None,
+    image_area_height: int = None,
 ) -> bool:
     """Create a Ken Burns clip from a static image with blurred background.
 
     For images that don't match the target aspect ratio (e.g., landscape image
     in 9:16 frame), creates a blurred background and overlays the animated
     image at correct aspect ratio. Prevents unnatural stretching.
+
+    If image_area_height is set, the foreground is fitted within the top
+    image_area_height pixels of the frame, leaving room for text below.
+    The blurred background still fills the entire frame.
     """
     if not os.path.exists(image_path):
         return False
@@ -425,29 +430,34 @@ def create_kenburns_clip(
 
     # Get source image dimensions to calculate proper foreground size
     src_w, src_h = _get_image_dimensions(image_path)
+
+    # When image_area_height is set, fit the foreground within the upper zone
+    # so text can render below without overlap.
+    fit_height = image_area_height if image_area_height else height
     target_aspect = width / height  # 0.5625 for 9:16
 
     if src_w > 0 and src_h > 0:
         src_aspect = src_w / src_h
-        # Calculate foreground size that fits within frame without stretching
-        if abs(src_aspect - target_aspect) < 0.05:
-            # Close enough to target aspect — fill the frame
+        fit_aspect = width / fit_height
+
+        # Calculate foreground size that fits within the available zone
+        if not image_area_height and abs(src_aspect - target_aspect) < 0.05:
+            # Close enough to full-frame aspect — fill the frame (no constraint)
             fg_w, fg_h = width, height
-        elif src_aspect > target_aspect:
-            # Landscape image in portrait frame — fit to width, letterbox vertically
+        elif src_aspect > fit_aspect:
+            # Landscape image — fit to width, letterbox vertically
             fg_w = width
             fg_h = int(width / src_aspect)
-            # Ensure even dimensions
             fg_h = fg_h - (fg_h % 2)
         else:
-            # Portrait image taller than frame — fit to height, pillarbox horizontally
-            fg_h = height
-            fg_w = int(height * src_aspect)
+            # Portrait image — fit to available height, pillarbox horizontally
+            fg_h = fit_height
+            fg_w = int(fit_height * src_aspect)
             fg_w = fg_w - (fg_w % 2)
     else:
-        fg_w, fg_h = width, height
+        fg_w, fg_h = width, fit_height
 
-    needs_blur_bg = fg_w != width or fg_h != height
+    needs_blur_bg = fg_w != width or fg_h != height or image_area_height
 
     # Build zoompan expression based on effect
     if effect == "zoom_in":
@@ -475,6 +485,12 @@ def create_kenburns_clip(
 
     if needs_blur_bg:
         # Two-layer approach: blurred background + Ken Burns foreground
+        # When image_area_height is set, center foreground in the upper zone
+        if image_area_height:
+            overlay_y = f"({image_area_height}-h)/2"
+        else:
+            overlay_y = "(H-h)/2"
+
         filter_complex = (
             # Background: scale up, crop to fill, blur heavily, force fps
             f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
@@ -482,8 +498,8 @@ def create_kenburns_clip(
             # Foreground: Ken Burns at correct aspect ratio
             f"[0:v]zoompan=z='{zoom_expr}':x='{x_expr}':y='{y_expr}'"
             f":d={total_frames}:s={fg_w}x{fg_h}:fps={fps}[fg];"
-            # Overlay centered
-            f"[bg][fg]overlay=(W-w)/2:(H-h)/2,format=yuv420p[out]"
+            # Overlay: centered horizontally, positioned in image zone
+            f"[bg][fg]overlay=(W-w)/2:{overlay_y},format=yuv420p[out]"
         )
         cmd = [
             "ffmpeg",
@@ -716,6 +732,7 @@ def create_shot_clip(
     is_shorts: bool = False,
     gpu_encoder: str = "h264_videotoolbox",
     gpu_flags: list = None,
+    image_area_height: int = None,
 ) -> bool:
     """Create a video clip for a single shot based on its source_type.
 
@@ -786,6 +803,7 @@ def create_shot_clip(
             effect,
             gpu_encoder,
             gpu_flags,
+            image_area_height=image_area_height,
         )
 
     elif source_type == "quote_overlay":
