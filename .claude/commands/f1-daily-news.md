@@ -302,6 +302,56 @@ python3 src/footage_downloader.py --project {name} --google-search
 
    Simple segments (intro/outro) don't need shots -- just use `footage_query` as normal.
 
+### Phase 3.5: Mandatory Footage Review (NEVER SKIP)
+
+**This step is MANDATORY before delivering the final video.** Do NOT skip it even if the assembler succeeds.
+
+After footage download completes and BEFORE final assembly:
+
+1. **Run Gemini vision validation on ALL image shots**:
+   ```python
+   # For each image shot (segment_XX_shot_YY.jpg), validate with Gemini Flash:
+   # "Identify the person/subject. Expected: [description]. Answer MATCH or MISMATCH."
+   ```
+   Check every portrait, team photo, and image shot against its expected subject. Google Images frequently returns wrong people — especially for less-famous figures (team principals, former drivers, actors).
+
+2. **Validate video clips at their `footage_start` timestamps** — be STRICT about team identity:
+   ```bash
+   # Extract a frame at the footage_start timestamp and validate:
+   ffmpeg -y -ss {footage_start} -i footage/segment_XX_shot_YY.mp4 -frames:v 1 -q:v 2 /tmp/check.jpg
+   ```
+   **CRITICAL: Use team-specific validation prompts.** Do NOT ask vague questions like "is this an F1 car on track?" — that matches ANY team's car. Instead ask:
+   ```
+   "What SPECIFIC F1 team's car is shown? Look at livery colors, sponsor logos, and team branding.
+   Expected: [Team Name] car ([color description], [key sponsor]).
+   Is this EXACTLY the expected team? Answer MATCH or MISMATCH."
+   ```
+   Examples of strict prompts:
+   - "Is this a Racing Bulls car (dark blue/navy with Cash App branding)?" NOT "Is this an F1 car?"
+   - "Is this Christian Horner specifically?" NOT "Is this a person at a press conference?"
+   - "Is this Albert Park Melbourne circuit?" NOT "Is this an F1 circuit?"
+
+   YouTube compilation videos (e.g., "First Look At Every 2026 Car") cycle through ALL teams — at `footage_start: 20` you might get McLaren when you wanted Racing Bulls. Always verify the SPECIFIC team at the SPECIFIC timestamp.
+
+3. **Fix any mismatches BEFORE assembly**:
+   - For wrong images: delete the file, re-download with a more specific query, re-validate
+   - For wrong video timestamps: scan multiple timestamps (every 20s) to find correct content, update `footage_start` in script.json
+   - For wrong team in compilation video: delete the file, re-download with a driver-specific or team-specific query (e.g., "Yuki Tsunoda Racing Bulls onboard" instead of "Racing Bulls 2026 on track")
+   - For fundamentally wrong video clips: delete and re-download with a better `footage_query`
+
+4. **Re-assemble only after ALL footage passes validation**:
+   ```bash
+   rm -f projects/{name}/output/final.mp4 projects/{name}/output/segment_*.mp4
+   python3 src/video_assembler.py --project {name} --segment-transition cut --no-music
+   ```
+
+**Common validation failures:**
+- Google Images returns a random woman instead of a male team principal
+- YouTube paddock arrival video starts with a building/flag shot before drivers appear (need to offset `footage_start` by 30-40s)
+- YouTube compilation videos ("all 2026 cars") show the WRONG team at the given timestamp — always use team/driver-specific queries
+- Generic F1 search returns footage of wrong team's car
+- Actor/celebrity images return circuit photos instead of the person
+
 ### Phase 4: Post-Production
 
 #### Update Reddit Ideas
@@ -364,3 +414,7 @@ to upload to YouTube with appropriate daily news metadata.
 18. **f1sound.mp3 is an engine recording, not a clean whoosh** — The file at `shared/audio/f1sound.mp3` (6s, stereo) has: 0-1.1s rev-up, 1.1-2.0s peak, 2.0-3.4s Doppler tail, 3.4s+ silence. Use 0-4s at `atempo=2.0` to compress into a single perceived whoosh.
 
 19. **Overlap f1sound with voice ending for smooth transitions** — Start f1sound 1s before voice ends using `adelay=(voice_duration - 1.0) * 1000` with `amix duration=longest`. This creates a smooth crossfade instead of an abrupt voice→SFX cut.
+
+20. **Gemini vision review is MANDATORY, not optional** — Never deliver a video without running Gemini Flash validation on every image shot and every video clip at its `footage_start` timestamp. Google Images returns wrong people ~20% of the time (e.g., a random woman instead of Christian Horner). YouTube clips land on wrong content ~30% of the time (e.g., a Bahrain building instead of Verstappen walking). The footage downloader checking file existence is NOT enough — you must verify the CONTENT matches the narrative. Fix all mismatches before assembly.
+
+21. **Validation prompts must be team-specific, not generic** — When validating footage with Gemini, ask "Is this SPECIFICALLY a Racing Bulls car (dark blue/navy with Cash App)?" not "Is this an F1 car on track?" The latter matches ANY team's car and will pass a McLaren when you needed Racing Bulls. YouTube compilation videos ("First Look At Every 2026 Car") cycle through all teams — at `footage_start: 20` you get whichever team appears at that timestamp, which is usually wrong. Use driver-specific or team-specific `footage_query` values (e.g., "Yuki Tsunoda Racing Bulls onboard" not "Racing Bulls 2026 on track").
