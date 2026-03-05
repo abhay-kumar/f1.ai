@@ -10,21 +10,22 @@ Features:
 - Timestamped chapters support
 - Higher quality upload settings
 """
-import os
-import sys
-import json
+
 import argparse
+import json
+import os
 import pickle
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from src.config import get_project_dir, SHARED_DIR
+from src.config import SHARED_DIR, get_project_dir
 
 # YouTube API imports
 try:
-    from google_auth_oauthlib.flow import InstalledAppFlow
     from google.auth.transport.requests import Request
+    from google_auth_oauthlib.flow import InstalledAppFlow
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaFileUpload
 except ImportError:
@@ -36,7 +37,7 @@ except ImportError:
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube.force-ssl",  # Required for captions
-    "https://www.googleapis.com/auth/youtube"  # Required for thumbnail upload
+    "https://www.googleapis.com/auth/youtube",  # Required for thumbnail upload
 ]
 CLIENT_SECRETS_FILE = f"{SHARED_DIR}/creds/youtube_client_secrets.json"
 TOKEN_FILE = f"{SHARED_DIR}/creds/youtube_token.pickle"
@@ -85,10 +86,14 @@ def get_authenticated_service():
                 print("1. Go to https://console.cloud.google.com/")
                 print("2. Create a project and enable YouTube Data API v3")
                 print("3. Create OAuth 2.0 credentials (Desktop app)")
-                print("4. Download and save as: shared/creds/youtube_client_secrets.json")
+                print(
+                    "4. Download and save as: shared/creds/youtube_client_secrets.json"
+                )
                 return None
 
-            flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS_FILE, SCOPES)
+            flow = InstalledAppFlow.from_client_secrets_file(
+                CLIENT_SECRETS_FILE, SCOPES
+            )
             credentials = flow.run_local_server(port=0)
 
         os.makedirs(os.path.dirname(TOKEN_FILE), exist_ok=True)
@@ -158,7 +163,7 @@ def generate_chapters(script: Dict) -> str:
         if section not in sections:
             sections[section] = {
                 "start_time": current_time,
-                "name": section.replace("_", " ").title()
+                "name": section.replace("_", " ").title(),
             }
 
         current_time += segment_duration
@@ -218,12 +223,14 @@ def generate_metadata_from_script(script: Dict) -> Dict:
     # Add disclaimer
     description_parts.append(F1_FAN_DISCLAIMER)
 
-    description_parts.extend([
-        "",
-        "#F1 #Formula1 #Racing #Motorsport",
-        "",
-        "Created with F1.ai - Automated F1 video production",
-    ])
+    description_parts.extend(
+        [
+            "",
+            "#F1 #Formula1 #Racing #Motorsport",
+            "",
+            "Created with F1.ai - Automated F1 video production",
+        ]
+    )
 
     description = "\n".join(description_parts)
 
@@ -297,8 +304,13 @@ def generate_metadata_from_script(script: Dict) -> Dict:
     }
 
 
-def upload_captions(youtube, video_id: str, caption_path: str,
-                    language: str = "en", name: str = "English") -> bool:
+def upload_captions(
+    youtube,
+    video_id: str,
+    caption_path: str,
+    language: str = "en",
+    name: str = "English",
+) -> bool:
     """Upload captions/subtitles to a YouTube video"""
     if not os.path.exists(caption_path):
         print(f"Caption file not found: {caption_path}")
@@ -310,21 +322,17 @@ def upload_captions(youtube, video_id: str, caption_path: str,
                 "videoId": video_id,
                 "language": language,
                 "name": name,
-                "isDraft": False
+                "isDraft": False,
             }
         }
 
         media = MediaFileUpload(
             caption_path,
             mimetype="application/x-subrip",  # SRT format
-            resumable=True
+            resumable=True,
         )
 
-        request = youtube.captions().insert(
-            part="snippet",
-            body=body,
-            media_body=media
-        )
+        request = youtube.captions().insert(part="snippet", body=body, media_body=media)
 
         response = request.execute()
         return response is not None
@@ -348,25 +356,18 @@ def upload_thumbnail(youtube, video_id: str, thumbnail_path: str) -> bool:
     # Determine MIME type from extension
     ext = os.path.splitext(thumbnail_path)[1].lower()
     mime_types = {
-        '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg',
-        '.png': 'image/png',
-        '.gif': 'image/gif',
-        '.bmp': 'image/bmp'
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".gif": "image/gif",
+        ".bmp": "image/bmp",
     }
-    mime_type = mime_types.get(ext, 'image/jpeg')
+    mime_type = mime_types.get(ext, "image/jpeg")
 
     try:
-        media = MediaFileUpload(
-            thumbnail_path,
-            mimetype=mime_type,
-            resumable=True
-        )
+        media = MediaFileUpload(thumbnail_path, mimetype=mime_type, resumable=True)
 
-        request = youtube.thumbnails().set(
-            videoId=video_id,
-            media_body=media
-        )
+        request = youtube.thumbnails().set(videoId=video_id, media_body=media)
 
         response = request.execute()
         return response is not None
@@ -376,8 +377,9 @@ def upload_thumbnail(youtube, video_id: str, thumbnail_path: str) -> bool:
         return False
 
 
-def upload_video(youtube, video_path: str, metadata: Dict,
-                 privacy: str = "private") -> Optional[Dict]:
+def upload_video(
+    youtube, video_path: str, metadata: Dict, privacy: str = "private"
+) -> Optional[Dict]:
     """Upload video to YouTube"""
     body = {
         "snippet": {
@@ -389,7 +391,7 @@ def upload_video(youtube, video_path: str, metadata: Dict,
         "status": {
             "privacyStatus": privacy,
             "selfDeclaredMadeForKids": False,
-        }
+        },
     }
 
     # Calculate file size for progress
@@ -400,13 +402,11 @@ def upload_video(youtube, video_path: str, metadata: Dict,
         video_path,
         chunksize=1024 * 1024 * 5,  # 5MB chunks for large files
         resumable=True,
-        mimetype="video/mp4"
+        mimetype="video/mp4",
     )
 
     request = youtube.videos().insert(
-        part=",".join(body.keys()),
-        body=body,
-        media_body=media
+        part=",".join(body.keys()), body=body, media_body=media
     )
 
     print(f"Uploading {size_mb:.1f}MB...", end="", flush=True)
@@ -418,7 +418,11 @@ def upload_video(youtube, video_path: str, metadata: Dict,
         if status:
             progress = int(status.progress() * 100)
             if progress > last_progress + 5:  # Update every 5%
-                print(f"\rUploading... {progress}% ({size_mb * progress / 100:.1f}/{size_mb:.1f}MB)", end="", flush=True)
+                print(
+                    f"\rUploading... {progress}% ({size_mb * progress / 100:.1f}/{size_mb:.1f}MB)",
+                    end="",
+                    flush=True,
+                )
                 last_progress = progress
 
     print(f"\rUploading... Done! ({size_mb:.1f}MB)                    ")
@@ -428,12 +432,20 @@ def upload_video(youtube, video_path: str, metadata: Dict,
 def main():
     parser = argparse.ArgumentParser(description="Upload F1 long-form video to YouTube")
     parser.add_argument("--project", required=True, help="Project name")
-    parser.add_argument("--privacy", default=DEFAULT_PRIVACY,
-                        choices=["public", "unlisted", "private"],
-                        help="Video privacy setting")
+    parser.add_argument(
+        "--privacy",
+        default=DEFAULT_PRIVACY,
+        choices=["public", "unlisted", "private"],
+        help="Video privacy setting",
+    )
     parser.add_argument("--title", help="Override auto-generated title")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Show metadata without uploading")
+    parser.add_argument(
+        "--description-file", help="Override description with contents of file"
+    )
+    parser.add_argument("--tags", help="Override tags (comma-separated)")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Show metadata without uploading"
+    )
     args = parser.parse_args()
 
     project_dir = get_project_dir(args.project)
@@ -443,7 +455,7 @@ def main():
 
     # Check for thumbnail (supports multiple formats)
     thumbnail_path = None
-    for ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp']:
+    for ext in [".jpg", ".jpeg", ".png", ".gif", ".bmp"]:
         candidate = f"{project_dir}/output/thumbnail{ext}"
         if os.path.exists(candidate):
             thumbnail_path = candidate
@@ -452,7 +464,9 @@ def main():
     # Validate files exist
     if not os.path.exists(video_path):
         print(f"Error: Video not found at {video_path}")
-        print(f"Run video assembly first: python3 src/video_assembler_longform.py --project {args.project}")
+        print(
+            f"Run video assembly first: python3 src/video_assembler_longform.py --project {args.project}"
+        )
         sys.exit(1)
 
     if not os.path.exists(script_path):
@@ -472,6 +486,15 @@ def main():
     if args.title:
         metadata["title"] = args.title
 
+    # Override description if provided
+    if args.description_file and os.path.exists(args.description_file):
+        with open(args.description_file) as f:
+            metadata["description"] = f.read()
+
+    # Override tags if provided
+    if args.tags:
+        metadata["tags"] = [t.strip() for t in args.tags.split(",")]
+
     # Get file info
     file_size = os.path.getsize(video_path) / (1024 * 1024)
 
@@ -489,16 +512,20 @@ def main():
     print(f"\n📝 DESCRIPTION:")
     print("-" * 50)
     # Show truncated description
-    desc_preview = metadata['description'][:800]
-    if len(metadata['description']) > 800:
+    desc_preview = metadata["description"][:800]
+    if len(metadata["description"]) > 800:
         desc_preview += "\n... [truncated]"
     print(desc_preview)
     print("-" * 50)
     print(f"\n🏷️  TAGS ({len(metadata['tags'])}):")
     print(f"   {', '.join(metadata['tags'][:15])}...")
     print(f"\n📚 REFERENCES: {ref_count} sources cited")
-    print(f"📝 CAPTIONS: {'Yes - ' + captions_path if has_captions else 'No captions file found'}")
-    print(f"🖼️  THUMBNAIL: {'Yes - ' + thumbnail_path if has_thumbnail else 'No thumbnail found (place thumbnail.jpg/png in output/)'}")
+    print(
+        f"📝 CAPTIONS: {'Yes - ' + captions_path if has_captions else 'No captions file found'}"
+    )
+    print(
+        f"🖼️  THUMBNAIL: {'Yes - ' + thumbnail_path if has_thumbnail else 'No thumbnail found (place thumbnail.jpg/png in output/)'}"
+    )
     print(f"\n🔒 PRIVACY: {args.privacy}")
     print(f"📁 VIDEO: {video_path}")
     print(f"📦 SIZE: {file_size:.1f}MB")
@@ -511,7 +538,7 @@ def main():
 
     print("\n" + "-" * 70)
     confirm = input("Proceed with upload? [y/N]: ").strip().lower()
-    if confirm != 'y':
+    if confirm != "y":
         print("Upload cancelled.")
         return
 
