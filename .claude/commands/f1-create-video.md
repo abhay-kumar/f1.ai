@@ -582,6 +582,33 @@ Mix visual types to maintain viewer engagement:
     - Pacing feels right
     - End credits display properly
 
+### Phase 4: Post-Assembly Validation (NEVER SKIP)
+
+**This step is MANDATORY after every assembly, BEFORE delivering the video.** A successful assembler exit code does NOT mean the video is correct.
+
+1. **Duration sanity check**: Compare `final.mp4` total duration against expected duration (sum of audio durations + transitions). They should be within 5%.
+   ```bash
+   ffprobe -v error -show_entries format=duration -of csv=p=0 projects/{name}/output/final.mp4
+   ```
+
+2. **First segment check**: Extract the first 15-30s of the final video audio and verify the opening voiceover plays completely without cutting off. The cold open is critical — if it's broken, the whole video feels broken.
+
+3. **Segment-by-segment duration check**: Compare each segment's video clip duration against its audio file duration. Flag any segment where video is <80% of audio — that means footage is too short and audio will be cut off or video will freeze.
+
+4. **`footage_start` consistency check**: The `footage_start` field exists at BOTH the top-level segment AND inside each `shots[]` entry. The assembler uses the top-level value for single-shot segments. When replacing footage files (especially with pre-trimmed clips), update BOTH levels or the video duration will be wrong (e.g., 5s video for 25s audio = cut-off voiceover).
+
+5. **PNG-as-JPG detection**: Reddit and Google Images sometimes serve PNG files despite `.jpg` URLs. This causes FFmpeg's zoompan filter to hang for minutes per image (vs <1s for actual JPEG). Always detect and convert:
+   ```bash
+   file footage/*.jpg 2>/dev/null | grep PNG
+   # Convert any PNG-as-JPG: ffmpeg -y -i input.png -q:v 2 output.jpg
+   ```
+
+6. **Fix any issues BEFORE delivery**: If any check fails, fix the root cause and re-assemble:
+   ```bash
+   rm -f projects/{name}/output/final.mp4 projects/{name}/output/segment_*.mp4
+   python3 src/image_video_assembler.py --project {name}
+   ```
+
 ### Phase 5: Upload (Optional)
 
 9. **Upload to YouTube**:
