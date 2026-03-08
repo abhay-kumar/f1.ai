@@ -1,13 +1,13 @@
 # F1 Daily News Update
 
-Create a daily F1 news update short video by finding trending stories from the past 24 hours and assembling them into a news-style video.
+Create a daily F1 news update video (16:9 horizontal) by finding trending stories from the past 24 hours and assembling them into a news-style video.
 
 ## Instructions
 
-You are creating a daily F1 news update short video. This command orchestrates the full workflow:
+You are creating a daily F1 news update video (16:9 long-form format). This command orchestrates the full workflow:
 1. Find trending F1 stories from Reddit (past 24 hours)
 2. Get user confirmation on which stories to include
-3. Create a news-style short video with all selected stories
+3. Create a news-style video with all selected stories
 
 ### Phase 1: Find Trending Stories
 
@@ -38,7 +38,7 @@ After reviewing the ideas from `/f1-find-content day`:
    - Present ONLY the fresh, unreported stories to the user
    - Clearly label how many stories were filtered out (e.g., "Filtered out 4 previously reported stories")
    - Ask user which stories to include (by number or ID)
-   - Recommend 6-8 stories for a ~60-90 second video
+   - Recommend 6-8 stories for a ~60-90 second video (16:9 horizontal format)
    - Wait for explicit confirmation before proceeding
 
 ### Phase 2: Create News Script
@@ -72,6 +72,14 @@ Once user confirms story selection, create the daily news script:
        },
        // ... news segments (one per story, 1-2 sentences each) ...
        // The first news segment CONTINUES the hook story with more detail
+       // Each news segment should have a lower_third_title for the on-screen graphic
+       {
+         "id": 3,
+         "text": "...",
+         "context": "Hadjar breakout performance at Red Bull",
+         "lower_third_title": "HADJAR QUALIFIES P3",
+         ...
+       },
        {
          "id": N,
          "text": "That's your daily news. Like, subscribe, and drop your thoughts in the comments. See you tomorrow!",
@@ -89,6 +97,11 @@ Once user confirms story selection, create the daily news script:
    - **Logo segment (segment 1)**: Always follows the hook. Pre-built assets, never regenerate.
    - **First news segment (segment 2)**: Should CONTINUE the hook story with more details/context. This creates a satisfying payoff for the hook.
    - **Remaining segments**: Cover the other stories, one per segment.
+   - **`lower_third_title`**: A short, punchy title for the on-screen lower-third graphic (e.g., `"RUSSELL TAKES POLE"`, `"HADJAR QUALIFIES P3"`). The assembler auto-generates from `context` if omitted, but explicit titles look better. Do NOT add `lower_third_title` to segment 0 (hook) or segment 1 (logo) — they are skipped automatically.
+   - **Shot pacing (3-4 shots per story)**: Each news segment should have 3-4 shots at 2-3 seconds each for professional pacing. Use the `shots` array with varied shot types:
+     - **Pattern: portrait → action → detail** (e.g., driver headshot → car on track → data graphic)
+     - Use `cross_dissolve` between related shots, `cut` for dramatic changes
+     - Single-image segments (no `shots` array) are acceptable for short stories but look less polished
    - **`visual` (storyboard)**: Describe what the viewer should SEE on screen for each segment. This is NOT a search query — it describes the intended visual scene. Be specific about:
      - Subject: which car, driver, team, or object
      - Shot type: aerial, onboard, pit lane, close-up, wide shot, trackside
@@ -101,7 +114,7 @@ Once user confirms story selection, create the daily news script:
    - Include specific details (names, numbers, quotes)
    - Transition naturally between stories
    - Total target: ~60-90 seconds
-   - Use the `shots` array for segments covering multiple topics (see `/f1-create-short` Shot List section for full reference)
+   - Use the `shots` array for segments covering multiple topics (see `/f1-create-video` Shot List section for full reference)
 
 4. **CHECKPOINT - Script Review**:
    - Present the complete script to user
@@ -128,21 +141,23 @@ Once user confirms story selection, create the daily news script:
 
 The **logo** and **outro** segments are consistent across all daily news videos:
 - Logo (segment 1): "Here's what happened in F1 in the last 24 hours." — Pre-built audio + video, never regenerate.
-- Outro: "That's your daily news. Like, subscribe, and drop your thoughts in the comments. See you tomorrow!"
+- Outro: "That's your daily news. Like, subscribe, and drop your thoughts in the comments. See you tomorrow!" — **Rendered dynamically by Remotion** (animated CTA card with logo, like/subscribe/comment icons). No pre-built footage needed.
 
 The **hook** (segment 0) is unique every episode — always the biggest story, with custom footage. This builds brand recognition while keeping the opening fresh and scroll-stopping.
 
 ### Shared Assets
 
 Pre-downloaded footage and audio for consistent elements is stored in `shared/assets/daily-news/`:
-- `outro.mp4` - F1 racing action montage for the outro segment
 - `logo_with_f1sound.mp3` - Pre-mixed logo segment audio: TTS "Here's what happened in F1 in the last twenty-four hours" + f1sound whoosh (2x speed, overlapped 1s with voice ending). Duration: 3.6s
-- `logo_zoom.mp4` - Pre-rendered logo zoom-in video (fast zoom, `zoom+0.008`, no audio track). Duration: 3.6s
+- `logo_zoom_16x9.mp4` - Pre-rendered 16:9 logo zoom-in video (logo.mp4 at 2.22x speed, 1920x1080, no audio track). Duration: 3.6s
+- `logo_zoom.mp4` - Legacy 9:16 version (1080x1920) for shorts use
 - `logo_voice.mp3` - Clean TTS voice only (no SFX), for remixing if needed. Duration: 2.58s
 - `f1sound_2x.mp3` - f1sound.mp3 0-4s at 2x speed, standalone whoosh clip. Duration: 2.0s
 - `logo.jpg` - Source logo image for regenerating zoom video if needed
 
-These assets should be copied to each new project's footage/audio folders to avoid redundant downloads, TTS generation, and audio mixing. The logo segment (segment_01) should NEVER be recreated from scratch — always use the pre-built assets.
+**Outro is NOT a shared asset** — it's rendered dynamically by the Remotion `Outro` composition during assembly. The assembler auto-detects segments with "outro" or "cta" in their context and renders the animated CTA card. No footage file needed for the outro segment.
+
+Only the **logo segment** assets should be copied to each new project. The logo segment (segment_01) should NEVER be recreated from scratch — always use the pre-built assets.
 
 ### Media Sourcing Priority (Reddit-First Approach)
 
@@ -163,7 +178,7 @@ python3 src/reddit_fetcher.py --post "https://reddit.com/r/formula1/comments/...
 **Priority order for ALL visual assets:**
 
 1. **Reddit media (FIRST PRIORITY — use for every story if available)**:
-   - GIFs/short clips from Reddit posts are IDEAL for shorts: they're vertical-friendly, current, and show exactly the moment being discussed
+   - GIFs/short clips from Reddit posts are IDEAL for daily news: they're current and show exactly the moment being discussed
    - Reddit GIFs served as MP4 (`preview.redd.it/xxx.gif?format=mp4`) are perfect short clips (3-10s)
    - Reddit videos (`v.redd.it`, `packaged-media.redd.it`) are higher quality but may need trimming
    - Reddit images (`i.redd.it`) work great for Ken Burns shots
@@ -172,7 +187,7 @@ python3 src/reddit_fetcher.py --post "https://reddit.com/r/formula1/comments/...
      - Video: `yt-dlp -o footage/segment_XX.mp4 "https://v.redd.it/xxx"` or `yt-dlp -o footage/segment_XX.mp4 "https://packaged-media.redd.it/xxx"`
      - Image: `curl -L -o footage/segment_XX_shot_YY.jpg "https://i.redd.it/xxx.jpg"`
    - **When a Reddit clip is shorter than the shot duration**: The assembler will hold on the last frame. This looks natural for 1-2s. For longer holds, split into two shots — video first, then image.
-   - **When a Reddit clip is 9:16 vertical**: Perfect — no blurred-background letterboxing needed. Set `footage_start: 0` to play from the beginning.
+   - **When a Reddit clip is 9:16 vertical**: The long-form assembler will handle it with letterboxing/blurred background. Set `footage_start: 0` to play from the beginning.
 
 2. **Official F1 channel footage (SECOND PRIORITY)**: Only if Reddit has no usable media:
    - Use `footage_query` to search official FORMULA 1 YouTube channel
@@ -216,27 +231,29 @@ python3 src/footage_downloader.py --project {name} --google-search
 
 ### Phase 3: Video Production
 
-**Follow the `/f1-create-short` pipeline from step 5 (Download Footage) through step 14 (Verify Final Output)**, with these daily-news-specific overrides:
+**Follow the `/f1-create-video` pipeline from Phase 3 (Asset Generation)**, with these daily-news-specific overrides:
 
-1. **Before downloading footage**, copy shared logo/outro assets:
+1. **Before downloading footage**, copy shared logo assets:
    ```bash
-   cp shared/assets/daily-news/logo_zoom.mp4 projects/f1-daily-news-{date}/footage/segment_01.mp4
+   cp shared/assets/daily-news/logo_zoom_16x9.mp4 projects/f1-daily-news-{date}/footage/segment_01.mp4
    cp shared/assets/daily-news/logo_with_f1sound.mp3 projects/f1-daily-news-{date}/audio/segment_01.mp3
-   cp shared/assets/daily-news/outro.mp4 projects/f1-daily-news-{date}/footage/segment_{outro_index}.mp4
    ```
    **Segment 0 (hook) needs its own footage** — do NOT copy shared assets for it. The hook is unique every episode with story-specific visuals.
+   **Outro does NOT need footage** — the assembler auto-renders a Remotion CTA card for the outro segment. Do not copy `outro.mp4`.
    The footage downloader will skip segments that already have footage files. The audio generator will skip segments that already have audio files. The logo segment (segment_01) is fully pre-built — no TTS generation or SFX mixing needed.
 
 2. **Set `footage` field** for ALL segments in script.json at creation time (e.g., `"footage": "segment_00.mp4"`). Pre-copied assets (intro/outro) especially need this since the footage_downloader only adds it for segments it downloads.
 
 3. **Duration target is fixed** at 60-90 seconds (not user-chosen like in general shorts).
 
-5. **Always use `--segment-transition cut --no-music` when assembling**:
+5. **Always use `--no-music --no-intro --no-sfx --no-credits` when assembling**:
    ```bash
-   python3 src/video_assembler.py --project f1-daily-news-{date} --segment-transition cut --no-music
+   python3 src/image_video_assembler.py --project f1-daily-news-{date} --no-music --no-intro --no-sfx --no-credits
    ```
-   - `--segment-transition cut`: The default `cross_dissolve` transition causes progressive audio-video drift: each 0.3s xfade overlap shortens the video track but not the audio, so by segment 7-8 the voiceover is ~2 seconds ahead of the visuals. Hard cuts eliminate this drift and better suit the punchy news format.
-   - `--no-music`: Background music at even 4% volume competes with the f1sound whoosh in the logo segment. Daily news format is punchy enough without background music.
+   - `--no-intro`: Daily news has its own logo segment (segment_01), skip the long-form animated intro.
+   - `--no-sfx`: No transition SFX between segments — the logo segment has its own f1sound whoosh.
+   - `--no-credits`: No end credits overlay — daily news has its own outro segment.
+   - `--no-music`: Background music competes with the f1sound whoosh in the logo segment. Daily news format is punchy enough without background music.
 
 4. **Shot list examples for daily news** -- when using multi-shot segments, common patterns include:
 
@@ -342,7 +359,7 @@ After footage download completes and BEFORE final assembly:
 4. **Re-assemble only after ALL footage passes validation**:
    ```bash
    rm -f projects/{name}/output/final.mp4 projects/{name}/output/segment_*.mp4
-   python3 src/video_assembler.py --project {name} --segment-transition cut --no-music
+   python3 src/image_video_assembler.py --project {name} --no-music --no-intro --no-sfx --no-credits
    ```
 
 **Common validation failures:**
@@ -363,7 +380,7 @@ After creating the video, update `shared/reddit_ideas.json`:
 ### Output
 
 Final video: `projects/f1-daily-news-{date}/output/final.mp4`
-- Format: 1080x1920 (9:16 vertical)
+- Format: 1920x1080 (16:9 horizontal)
 - Duration: ~60-90 seconds
 - Style: Fast-paced news update
 
@@ -371,7 +388,7 @@ Final video: `projects/f1-daily-news-{date}/output/final.mp4`
 
 After the video is created, suggest:
 ```
-/f1-upload-short
+/f1-upload-video
 ```
 to upload to YouTube with appropriate daily news metadata.
 
@@ -383,7 +400,7 @@ to upload to YouTube with appropriate daily news metadata.
 
 3. **Person portraits: photos beat YouTube clips** — For team principals, former drivers, and personnel (e.g., Damon Hill, Jenson Button, Claire Williams), use `source_type: "image"` with Google Images search (`--google-search` flag). YouTube clips of these people are either old race footage or interview clips that don't match the news context. Ken Burns zoom on a good portrait looks professional and clean.
 
-4. **Fandom Wiki images are unusable** — F1 Fandom Wiki serves WebP format (despite .jpg URLs) at only 300px wide. Far too small for 1080x1920 shorts. Use Google Images via the footage downloader's `--google-search` flag instead.
+4. **Fandom Wiki images are unusable** — F1 Fandom Wiki serves WebP format (despite .jpg URLs) at only 300px wide. Far too small for 1920x1080 video. Use Google Images via the footage downloader's `--google-search` flag instead.
 
 5. **Ferrari footage needs specific channel/driver queries** — Generic queries like "Ferrari SF-26 sidepod close up" return Barcelona Highlights compilations that land on non-Ferrari content at the given timestamp. Use the official Ferrari channel (e.g., "SF-26 Fires Up") or F1 channel with driver-specific queries (e.g., "Charles Leclerc Sets The Fastest Lap Pre-Season Testing").
 
@@ -391,7 +408,7 @@ to upload to YouTube with appropriate daily news metadata.
 
 7. **Pronunciation vs spelling in script.json** — The `text` field is used for BOTH audio generation AND text overlay. If you respell a name for pronunciation (e.g., "Laurent" → "Lorahn"), the misspelling will appear on screen. Fix: use phonetic spelling for audio generation, then restore correct spelling before video assembly. Cached MP3s won't regenerate as long as the files exist.
 
-8. **Blurred background aspect ratio fix** — The common `scale=1080:-2` for foreground in 9:16 frame causes stretching on some sources. For 16:9 (1920x1080) sources, explicitly use `scale=1080:608` to maintain correct aspect ratio.
+8. **16:9 format means no blurred backgrounds needed** — Since daily news now uses 16:9 horizontal format, most footage plays natively without letterboxing. Vertical (9:16) Reddit clips will be handled automatically by the long-form assembler.
 
 9. **Skip jittery interview cuts** — Interview footage from YouTube often has abrupt transitions at clip boundaries. Always preview the first 1-2 seconds and add offset to skip any jitter (e.g., start at 525s instead of 524s).
 
@@ -399,7 +416,7 @@ to upload to YouTube with appropriate daily news metadata.
 
 11. **Instagram challenge_required** — Instagram may trigger security challenges on upload. The user needs to approve login from the Instagram app before retrying.
 
-12. **Image shots use upper-zone layout** — Image shots in shorts are automatically fitted into the top 1270px of the 1080x1920 frame. The blurred background fills the full frame, and text renders below the image with no overlap. `no_text` flags are never needed on image shots.
+12. **Image shots use Ken Burns in 16:9** — Image shots in the long-form assembler get Ken Burns zoom/pan effects automatically. The assembler scales images to fill the 1920x1080 frame. No `no_text` flags needed since long-form doesn't burn in text overlays.
 
 13. **Reddit media URLs get truncated by the fetcher** — `reddit_fetcher.py` output truncates the `s=` hash parameter in `preview.redd.it` URLs, causing 403 errors. Fix: fetch the post JSON directly with `curl -s -L -H "User-Agent: Mozilla/5.0" "https://www.reddit.com/r/formula1/comments/{id}/.json"` and extract full URLs with `html.unescape()`. `i.redd.it` URLs work fine.
 
@@ -407,7 +424,7 @@ to upload to YouTube with appropriate daily news metadata.
 
 15. **Always QA footage content, not just existence** — The footage downloader often returns plausible but wrong content. Use `--list` after download to check video titles. Color signatures: Red (168,66,49) = Ferrari, Orange (255,128,0) = McLaren, Dark green (34,153,113) = Aston Martin, Dark blue (42,44,66) = Red Bull.
 
-16. **Text overlay uses team colors, not white** — The shorts assembler renders text in team-specific colors (e.g., Ferrari red `#E8002D`, McLaren orange `#FF8000`). Text also has a black shadow at +3px offset.
+16. **Long-form uses SRT captions, not burned-in text** — Unlike the shorts assembler, the long-form assembler (`image_video_assembler.py`) does NOT burn text overlays into the video. Captions are generated as separate SRT files for YouTube's caption system. This is standard for long-form YouTube content.
 
 17. **Never mix SFX into TTS and treat it as the original** — Always keep a clean `_clean.mp3` backup of TTS immediately after generation, before any audio mixing. The audio generator caches by file existence — if you overwrite `segment_XX.mp3` with a mixed version, it's treated as "cached" on next run.
 
@@ -418,3 +435,21 @@ to upload to YouTube with appropriate daily news metadata.
 20. **Gemini vision review is MANDATORY, not optional** — Never deliver a video without running Gemini Flash validation on every image shot and every video clip at its `footage_start` timestamp. Google Images returns wrong people ~20% of the time (e.g., a random woman instead of Christian Horner). YouTube clips land on wrong content ~30% of the time (e.g., a Bahrain building instead of Verstappen walking). The footage downloader checking file existence is NOT enough — you must verify the CONTENT matches the narrative. Fix all mismatches before assembly.
 
 21. **Validation prompts must be team-specific, not generic** — When validating footage with Gemini, ask "Is this SPECIFICALLY a Racing Bulls car (dark blue/navy with Cash App)?" not "Is this an F1 car on track?" The latter matches ANY team's car and will pass a McLaren when you needed Racing Bulls. YouTube compilation videos ("First Look At Every 2026 Car") cycle through all teams — at `footage_start: 20` you get whichever team appears at that timestamp, which is usually wrong. Use driver-specific or team-specific `footage_query` values (e.g., "Yuki Tsunoda Racing Bulls onboard" not "Racing Bulls 2026 on track").
+
+22. **Lower thirds and topic cards are ON by default** — The assembler automatically adds team-colored lower-third overlays (story title + "F1 BURNOUTS" branding) to news segments, and topic transition cards between stories. Segments 0 (hook) and 1 (logo) are skipped. Use `--no-lower-thirds` or `--no-topic-cards` to disable. Add `lower_third_title` to script.json for custom titles; otherwise auto-generated from `context`.
+
+23. **Single-image segments with `footage` pointing to .jpg work correctly** — The assembler detects image extensions (.jpg, .jpeg, .png, .webp) in the `footage` field and routes to `create_image_clip()` with Ken Burns effect instead of `process_video_clip()`. Without this, images produced zero video frames and caused the video to freeze.
+
+24. **PNG files saved as .jpg cause zoompan to hang** — Reddit and Google Images sometimes serve PNG despite .jpg URLs. Detect with `file footage/*.jpg | grep PNG` and convert with `ffmpeg -y -i input.png -q:v 2 output.jpg`. Always use `--resolution hd` for daily news (4K zoompan is extremely slow).
+
+25. **Outro is Remotion-rendered, not footage** — The assembler auto-detects segments with "outro" or "cta" in context and renders a Remotion CTA card (logo + like/subscribe/comment + accent lines + "SEE YOU TOMORROW"). No need to copy `shared/assets/daily-news/outro.mp4` to projects. Falls back to footage if Remotion fails.
+
+26. **50fps source footage breaks concat** — Official F1 broadcast footage is often 50fps (PAL). Mixed with 30fps assembler segments, concat demuxer produces mismatched video/audio durations (video stream shorter than audio = black frames at end). The `process_video_clip()` function now forces `-r 30` on all clips. If you encounter missing video at the end of a video, check `ffprobe -select_streams v:0 -show_entries stream=r_frame_rate` on the source.
+
+27. **Topic card duration 1.5s, not 0.8s** — `TOPIC_CARD_DURATION` in config.py was increased from 0.8s to 1.5s. At 0.8s the character-stagger reveal text was unreadable. 1.5s gives enough time to read the title.
+
+28. **Topic cards have swoosh SFX** — `create_topic_card()` now mixes `shared/sfx/whoosh_clean.mp3` into the topic card audio using `apad` + `aresample=24000`. This gives an audible transition cue.
+
+29. **Thumbnail: use dramatic footage frame, not auto-generator** — The `thumbnail_generator.py` auto-picks a frame from the video which is often boring. Better approach: manually select the most dramatic footage image (crash, close-up, action) and build thumbnail with FFmpeg: `scale=1280:720` + `eq=brightness=-0.08:contrast=1.3` + `drawbox` dark overlay + bold `drawtext` in white + team color + "F1 DAILY NEWS" branding. Thumbnails can be replaced after upload via `youtube.thumbnails().set()`.
+
+30. **Logo intro uses logo.mp4 at 2.22x speed** — The logo animation source (`shared/assets/logo/logo.mp4`, 8s, 1280x720) is sped up with `setpts=PTS/2.22` to fill the 3.6s audio slot smoothly. Previous 4x speed felt like a frozen pause at the end. No tpad/hold needed at 2.22x.
