@@ -175,6 +175,12 @@ For any story where the fetcher didn't find media (e.g., text-only discussion po
 python3 src/reddit_fetcher.py --post "https://reddit.com/r/formula1/comments/..."
 ```
 
+**RACE DAY RULE**: When covering a specific race (qualifying, sprint, or race day), footage MUST be from THAT event — not generic driver portraits, pre-season testing, or prior-year clips. Viewers notice immediately when visuals don't match the event. For race recaps:
+1. Download the official "Race Highlights | 2026 [Race Name] Grand Prix" video from the F1 YouTube channel
+2. Download the "Drivers React After The Race" video for interview clips
+3. Extract clips at specific timestamps for each story (e.g., race start at t=30, VSC pit stop at t=270, podium at t=470)
+4. Use these race-specific clips for ALL YouTube-sourced shots. Never fall back to testing footage or old races.
+
 **Priority order for ALL visual assets:**
 
 1. **Reddit media (FIRST PRIORITY — use for every story if available)**:
@@ -246,10 +252,11 @@ python3 src/footage_downloader.py --project {name} --google-search
 
 3. **Duration target is fixed** at 60-90 seconds (not user-chosen like in general shorts).
 
-5. **Always use `--no-music --no-intro --no-sfx --no-credits` when assembling**:
+5. **Always use `--resolution hd --no-music --no-intro --no-sfx --no-credits` when assembling**:
    ```bash
-   python3 src/image_video_assembler.py --project f1-daily-news-{date} --no-music --no-intro --no-sfx --no-credits
+   python3 src/image_video_assembler.py --project f1-daily-news-{date} --resolution hd --no-music --no-intro --no-sfx --no-credits
    ```
+   - `--resolution hd`: Daily news doesn't need 4K. HD (1920x1080) is much faster, especially for Ken Burns zoompan on images. 4K zoompan can hang for minutes per image.
    - `--no-intro`: Daily news has its own logo segment (segment_01), skip the long-form animated intro.
    - `--no-sfx`: No transition SFX between segments — the logo segment has its own f1sound whoosh.
    - `--no-credits`: No end credits overlay — daily news has its own outro segment.
@@ -356,10 +363,16 @@ After footage download completes and BEFORE final assembly:
    - For wrong team in compilation video: delete the file, re-download with a driver-specific or team-specific query (e.g., "Yuki Tsunoda Racing Bulls onboard" instead of "Racing Bulls 2026 on track")
    - For fundamentally wrong video clips: delete and re-download with a better `footage_query`
 
-4. **Re-assemble only after ALL footage passes validation**:
+4. **Detect PNG files saved as .jpg** (causes zoompan to hang):
+   ```bash
+   file footage/*.jpg | grep PNG
+   ```
+   Convert any PNG-as-JPG files: `ffmpeg -y -i input.png -q:v 2 output.jpg`
+
+5. **Re-assemble only after ALL footage passes validation**:
    ```bash
    rm -f projects/{name}/output/final.mp4 projects/{name}/output/segment_*.mp4
-   python3 src/image_video_assembler.py --project {name} --no-music --no-intro --no-sfx --no-credits
+   python3 src/image_video_assembler.py --project {name} --resolution hd --no-music --no-intro --no-sfx --no-credits
    ```
 
 **Common validation failures:**
@@ -368,6 +381,50 @@ After footage download completes and BEFORE final assembly:
 - YouTube compilation videos ("all 2026 cars") show the WRONG team at the given timestamp — always use team/driver-specific queries
 - Generic F1 search returns footage of wrong team's car
 - Actor/celebrity images return circuit photos instead of the person
+
+### Phase 3.75: Post-Assembly Validation (NEVER SKIP)
+
+**This step is MANDATORY after every assembly, BEFORE delivering the video to the user.** A successful assembler exit code does NOT mean the video is correct.
+
+1. **Duration sanity check**: Compare `final.mp4` total duration against the sum of all audio file durations + topic card time (~1.5s per topic card). They should be within 5%.
+   ```bash
+   ffprobe -v error -show_entries format=duration -of csv=p=0 projects/{name}/output/final.mp4
+   # Compare against: sum of all audio/*.mp3 durations + (num_topic_cards × 1.5)
+   ```
+
+2. **Hook segment check (CRITICAL)**: The hook is the most important segment — if it's broken, the whole video feels broken. Extract the first 15s of the final video audio and verify the hook voiceover plays completely without cutting off:
+   ```bash
+   ffmpeg -y -i projects/{name}/output/final.mp4 -t 15 -q:a 2 /tmp/hook_check.mp3
+   # Listen or check duration against audio/segment_00.mp3 duration
+   ```
+
+3. **Segment-by-segment duration check**: Parse the assembler log for each segment's reported video duration. Compare against each segment's audio file duration. Flag any segment where video duration is <80% of audio duration — that means footage is too short and audio will be cut off or video will freeze.
+   ```bash
+   # For each segment, compare:
+   ffprobe -v error -show_entries format=duration -of csv=p=0 audio/segment_XX.mp3
+   # Against the segment's video clip duration in output/segment_XX.mp4
+   ```
+
+4. **`footage_start` consistency check**: Verify that top-level `footage_start` and shot-level `footage_start` values are consistent. When footage files are replaced (e.g., pre-trimmed clips), BOTH levels must be updated. The assembler uses the top-level value for single-shot segments.
+   ```bash
+   # Check script.json for any segment where top-level footage_start != 0
+   # but shots[0].footage_start == 0 (or vice versa) — this is a mismatch
+   python3 -c "
+   import json
+   with open('projects/{name}/script.json') as f: script = json.load(f)
+   for seg in script['segments']:
+       top = seg.get('footage_start', 0)
+       shots = seg.get('shots', [])
+       if shots and shots[0].get('footage_start', 0) != top:
+           print(f'MISMATCH segment {seg[\"id\"]}: top={top}, shot[0]={shots[0].get(\"footage_start\", 0)}')
+   "
+   ```
+
+5. **Fix any issues BEFORE delivery**: If any check fails, fix the root cause and re-assemble:
+   ```bash
+   rm -f projects/{name}/output/final.mp4 projects/{name}/output/segment_*.mp4
+   python3 src/image_video_assembler.py --project {name} --resolution hd --no-music --no-intro --no-sfx --no-credits
+   ```
 
 ### Phase 4: Post-Production
 

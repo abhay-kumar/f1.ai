@@ -108,13 +108,23 @@ f1.ai/
     - Background music mixed at 15%
     - GPU encoding (VideoToolbox)
 
-13. **USER REVIEW CHECKPOINT (MANDATORY)**: Present the output video to the user for review BEFORE uploading:
+13. **Post-Assembly Validation (NEVER SKIP)**: After assembly completes, verify the output BEFORE presenting to the user:
+    - **Duration sanity check**: Compare `final.mp4` duration against total audio duration. They should be within 5%.
+      ```bash
+      ffprobe -v error -show_entries format=duration -of csv=p=0 projects/{name}/output/final.mp4
+      ```
+    - **First segment check**: Extract the first 10s of final video audio and verify the opening voiceover plays completely without cutting off.
+    - **Segment duration check**: If any segment's video clip is <80% of its audio duration, footage is too short — audio will cut off or video will freeze.
+    - **`footage_start` consistency**: The `footage_start` field exists at BOTH the top-level segment AND inside each `shots[]` entry. The assembler uses the top-level value for single-shot segments. When replacing footage (especially with pre-trimmed clips), update BOTH levels.
+    - **Fix any issues** before proceeding: fix the root cause and re-assemble.
+
+14. **USER REVIEW CHECKPOINT (MANDATORY)**: Present the output video to the user for review BEFORE uploading:
     - Tell the user to review `projects/{name}/output/final.mp4`
     - **STOP and wait for user confirmation** that the video looks good
     - Fix any issues (footage swaps, sync problems) before uploading
     - **NEVER upload without explicit user approval of the final video**
 
-14. **Verify Final Output**: Check that:
+15. **Verify Final Output**: Check that:
     - Video and audio durations match
     - Video plays correctly throughout
     - Content syncs with narration

@@ -64,6 +64,11 @@ The project name is the folder name under `projects/` containing the video to up
    - Confirm thumbnail was uploaded
    - Confirm upload_info.json was saved
 
+8. **Generate and share Instagram description** (ALWAYS do this after upload):
+   - Write a ready-to-paste Instagram caption based on the script content
+   - Format: emoji headline, 2-3 sentence summary of key stories/topics, "Full video on YouTube — link in bio" CTA, then a block of relevant hashtags (#F1 #Formula1 #driver #team names etc.)
+   - This step is MANDATORY — do not wait for the user to ask for it
+
 ## Thumbnail Generation
 
 The thumbnail generator (`src/thumbnail_generator.py`) creates viral-style thumbnails automatically:
