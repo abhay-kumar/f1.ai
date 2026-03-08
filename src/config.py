@@ -76,6 +76,20 @@ LONGFORM_VIDEO_BITRATE_HD = "12M"  # High quality for HD
 LONGFORM_AUDIO_BITRATE = "256k"  # Better audio for long-form
 LONGFORM_DURATION_TARGET = 600  # ~10 minutes default
 
+# Lower-Third Graphics
+LOWER_THIRD_DURATION = 3.0  # How long the lower third is visible (seconds)
+LOWER_THIRD_DELAY = 0.5  # Delay before appearing (seconds)
+LOWER_THIRD_BAR_HEIGHT_HD = 70  # Background bar height (HD)
+LOWER_THIRD_BAR_HEIGHT_4K = 120  # Background bar height (4K)
+LOWER_THIRD_ACCENT_WIDTH = 6  # Team-colored left accent bar width (HD)
+LOWER_THIRD_Y_OFFSET = 40  # Distance from bottom edge (HD)
+
+# Topic Transition Cards
+TOPIC_CARD_DURATION = 1.5  # Duration of transition card (seconds)
+
+# Remotion Graphics
+REMOTION_PROJECT_DIR = f"{BASE_DIR}/shared/remotion-template"
+
 # F1 Team Colors (official hex codes for team radio style text)
 F1_TEAM_COLORS = {
     # Current teams (2026 grid)

@@ -249,12 +249,13 @@ def process_segment(args: Tuple) -> Tuple[int, bool, float, Optional[str]]:
         duration = get_duration(audio_path)
         return idx, True, duration, "cached"
 
+    # Prefer tts_text for pronunciation overrides, fall back to text
+    tts_text = segment.get("tts_text", segment["text"])
+
     if engine == "gemini":
-        success, error = generate_audio_gemini(
-            segment["text"], audio_path, voice=gemini_voice
-        )
+        success, error = generate_audio_gemini(tts_text, audio_path, voice=gemini_voice)
     else:
-        success, error = generate_audio_elevenlabs(segment["text"], audio_path)
+        success, error = generate_audio_elevenlabs(tts_text, audio_path)
 
     if success:
         # Apply speed adjustment if not 1.0x

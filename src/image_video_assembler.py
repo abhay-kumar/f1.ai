@@ -41,16 +41,26 @@ from src.config import (
     BACKGROUND_MUSIC,
     BASE_DIR,
     CREDITS_DURATION_LONGFORM,
+    F1_DEFAULT_COLOR,
+    F1_TEAM_COLORS,
     LONGFORM_AUDIO_BITRATE,
     LONGFORM_FRAME_RATE,
     LONGFORM_OUTPUT_HEIGHT_4K,
     LONGFORM_OUTPUT_HEIGHT_HD,
     LONGFORM_OUTPUT_WIDTH_4K,
     LONGFORM_OUTPUT_WIDTH_HD,
+    LOWER_THIRD_ACCENT_WIDTH,
+    LOWER_THIRD_BAR_HEIGHT_4K,
+    LOWER_THIRD_BAR_HEIGHT_HD,
+    LOWER_THIRD_DELAY,
+    LOWER_THIRD_DURATION,
+    LOWER_THIRD_Y_OFFSET,
     MUSIC_VOLUME_ATMOSPHERIC,
     MUSIC_VOLUME_LONGFORM,
     MUSIC_VOLUME_UPLIFTING,
     OUTRO_AUDIO_LONGFORM,
+    REMOTION_PROJECT_DIR,
+    TOPIC_CARD_DURATION,
     get_project_dir,
 )
 from src.intro_generator import create_intro_video
@@ -113,6 +123,380 @@ def gpu_enc_args() -> list:
 
 # Ken Burns effects
 KEN_BURNS_EFFECTS = ["zoom_in", "zoom_out", "pan_left", "pan_right"]
+
+# Font paths
+F1_FONT_BOLD = os.path.join(BASE_DIR, "shared/fonts/Formula1-Bold.ttf")
+F1_FONT_REGULAR = os.path.join(BASE_DIR, "shared/fonts/Formula1-Regular.ttf")
+
+# Skip keywords for lower-third detection (segments that should NOT get overlays)
+_SKIP_LOWER_THIRD_KEYWORDS = {"logo", "brand moment", "outro", "cta", "intro"}
+
+
+# ============================================================================
+# LOWER THIRDS & TOPIC CARDS
+# ============================================================================
+
+
+def escape_text_for_ffmpeg(text: str) -> str:
+    """Escape special characters for FFmpeg drawtext filter."""
+    text = text.replace("\\", "\\\\")
+    text = text.replace("'", "\u2019")
+    text = text.replace(":", "\\:")
+    return text
+
+
+def get_team_color(text: str) -> str:
+    """Detect team/driver mentions and return appropriate F1 team color."""
+    text_lower = text.lower()
+    for keyword, color in F1_TEAM_COLORS.items():
+        if keyword in text_lower:
+            return color
+    return F1_DEFAULT_COLOR
+
+
+def get_lower_third_title(segment: Dict) -> Optional[str]:
+    """Get the lower-third title for a segment, or None to skip.
+
+    Returns None for hook (id=0), logo, outro, and other non-news segments.
+    """
+    # Explicit title takes priority
+    if segment.get("lower_third_title"):
+        return segment["lower_third_title"]
+
+    context = segment.get("context", "").lower()
+
+    # Skip hook segment (id=0)
+    if segment.get("id", -1) == 0:
+        return None
+
+    # Skip non-news segments
+    for keyword in _SKIP_LOWER_THIRD_KEYWORDS:
+        if keyword in context:
+            return None
+
+    # Auto-generate from context
+    raw = segment.get("context", "")
+    if not raw:
+        return None
+    return raw.upper()[:45]
+
+
+def render_remotion_overlay(
+    composition_id: str,
+    output_path: str,
+    props: dict,
+    codec: str = "prores",
+    timeout: int = 30,
+) -> bool:
+    """Render a Remotion composition to a video file.
+
+    Args:
+        composition_id: Remotion composition name (e.g. "LowerThird", "TopicCard")
+        output_path: Where to save the rendered video
+        props: React component props (title, teamColor, duration)
+        codec: "prores" for transparent alpha (ProRes 4444), "h264" for opaque
+        timeout: Max render time in seconds
+    """
+    props_file = output_path + ".props.json"
+    try:
+        with open(props_file, "w") as f:
+            json.dump(props, f)
+
+        cmd = [
+            "npx",
+            "remotion",
+            "render",
+            composition_id,
+            output_path,
+            f"--props={props_file}",
+            f"--codec={codec}",
+        ]
+        # ProRes 4444 with alpha needs special flags
+        if codec == "prores":
+            cmd.extend(
+                [
+                    "--prores-profile=4444",
+                    "--pixel-format=yuva444p10le",
+                    "--image-format=png",
+                ]
+            )
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=REMOTION_PROJECT_DIR,
+            timeout=timeout,
+        )
+        return os.path.exists(output_path)
+    except (subprocess.TimeoutExpired, Exception) as e:
+        print(f"    Remotion render failed: {e}")
+        return False
+    finally:
+        if os.path.exists(props_file):
+            os.remove(props_file)
+
+
+def _apply_lower_third_ffmpeg(
+    input_path: str,
+    output_path: str,
+    title: str,
+    team_color: str,
+    width: int,
+    height: int,
+) -> bool:
+    """FFmpeg fallback: flat drawbox+drawtext lower-third overlay."""
+    escaped_title = escape_text_for_ffmpeg(title)
+    is_4k = width >= 3840
+    scale = 2 if is_4k else 1
+
+    bar_h = LOWER_THIRD_BAR_HEIGHT_4K if is_4k else LOWER_THIRD_BAR_HEIGHT_HD
+    accent_w = LOWER_THIRD_ACCENT_WIDTH * scale
+    y_off = LOWER_THIRD_Y_OFFSET * scale
+    bar_x = 20 * scale
+    bar_y = f"h-{bar_h + y_off}"
+    bar_w = 550 * scale
+    text_x = bar_x + accent_w + 8 * scale
+    title_y = f"h-{bar_h + y_off - 12 * scale}"
+    brand_y = f"h-{y_off + 18 * scale}"
+    title_sz = 44 if is_4k else 28
+    brand_sz = 26 if is_4k else 16
+
+    delay = LOWER_THIRD_DELAY
+    end = delay + LOWER_THIRD_DURATION
+    enable = f"between(t,{delay},{end})"
+
+    vf = (
+        f"drawbox=x={bar_x}:y={bar_y}:w={bar_w}:h={bar_h}"
+        f":color=black@0.65:t=fill:enable='{enable}',"
+        f"drawbox=x={bar_x}:y={bar_y}:w={accent_w}:h={bar_h}"
+        f":color={team_color}:t=fill:enable='{enable}',"
+        f"drawtext=text='{escaped_title}'"
+        f":fontfile={F1_FONT_BOLD}:fontsize={title_sz}"
+        f":fontcolor=white:x={text_x}:y={title_y}"
+        f":enable='{enable}',"
+        f"drawtext=text='F1 BURNOUTS'"
+        f":fontfile={F1_FONT_REGULAR}:fontsize={brand_sz}"
+        f":fontcolor={team_color}:x={text_x}:y={brand_y}"
+        f":enable='{enable}'"
+    )
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        input_path,
+        "-vf",
+        vf,
+        *gpu_enc_args(),
+        "-c:a",
+        "copy",
+        output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    return os.path.exists(output_path)
+
+
+def apply_lower_third(
+    input_path: str,
+    output_path: str,
+    title: str,
+    team_color: str,
+    width: int,
+    height: int,
+) -> bool:
+    """Overlay an animated lower-third on a segment video using Remotion.
+
+    Renders a transparent ProRes 4444 overlay with animated slide-in/out,
+    then composites it onto the segment with FFmpeg. Falls back to flat
+    FFmpeg drawtext if Remotion render fails.
+    """
+    is_4k = width >= 3840
+    comp_id = "LowerThird4K" if is_4k else "LowerThird"
+    duration = LOWER_THIRD_DELAY + LOWER_THIRD_DURATION
+
+    # Render transparent overlay
+    overlay_path = output_path + ".overlay.mov"
+    props = {"title": title, "teamColor": team_color, "duration": duration}
+
+    if render_remotion_overlay(comp_id, overlay_path, props, codec="prores"):
+        # Composite overlay onto segment
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            input_path,
+            "-i",
+            overlay_path,
+            "-filter_complex",
+            "[0:v][1:v]overlay=0:0:eof_action=pass[v]",
+            "-map",
+            "[v]",
+            "-map",
+            "0:a",
+            *gpu_enc_args(),
+            "-c:a",
+            "copy",
+            output_path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        # Clean up overlay
+        if os.path.exists(overlay_path):
+            os.remove(overlay_path)
+        if os.path.exists(output_path):
+            return True
+
+    # Fallback to FFmpeg
+    if os.path.exists(overlay_path):
+        os.remove(overlay_path)
+    return _apply_lower_third_ffmpeg(
+        input_path, output_path, title, team_color, width, height
+    )
+
+
+def _create_topic_card_ffmpeg(
+    output_path: str,
+    title: str,
+    team_color: str,
+    width: int,
+    height: int,
+    duration: float = TOPIC_CARD_DURATION,
+) -> bool:
+    """FFmpeg fallback: static dark card with centered text and accent lines."""
+    escaped_title = escape_text_for_ffmpeg(title)
+    is_4k = width >= 3840
+    title_sz = 52 if is_4k else 32
+    line_w = 400 if not is_4k else 700
+    line_h = 3 if not is_4k else 5
+    line_x = f"(w-{line_w})/2"
+    line_y_top = f"(h/2-{50 if not is_4k else 80})"
+    line_y_bot = f"(h/2+{35 if not is_4k else 55})"
+
+    vf = (
+        f"drawbox=x={line_x}:y={line_y_top}:w={line_w}:h={line_h}"
+        f":color={team_color}:t=fill,"
+        f"drawtext=text='{escaped_title}'"
+        f":fontfile={F1_FONT_BOLD}:fontsize={title_sz}"
+        f":fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2,"
+        f"drawbox=x={line_x}:y={line_y_bot}:w={line_w}:h={line_h}"
+        f":color={team_color}:t=fill"
+    )
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        f"color=c=#111111:s={width}x{height}:r={LONGFORM_FRAME_RATE}:d={duration}",
+        "-f",
+        "lavfi",
+        "-i",
+        f"anullsrc=r=24000:cl=mono",
+        "-vf",
+        vf,
+        *gpu_enc_args(),
+        "-c:a",
+        "aac",
+        "-b:a",
+        "64k",
+        "-t",
+        str(duration),
+        "-shortest",
+        output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    return os.path.exists(output_path)
+
+
+def create_topic_card(
+    output_path: str,
+    title: str,
+    team_color: str,
+    width: int,
+    height: int,
+    duration: float = TOPIC_CARD_DURATION,
+) -> bool:
+    """Generate an animated topic transition card using Remotion.
+
+    Renders a character-stagger reveal with team-colored accents on dark
+    background. Falls back to flat FFmpeg version if Remotion fails.
+    """
+    is_4k = width >= 3840
+    comp_id = "TopicCard4K" if is_4k else "TopicCard"
+    props = {"title": title, "teamColor": team_color, "duration": duration}
+
+    # Render with Remotion (opaque H.264)
+    swoosh_path = os.path.join(BASE_DIR, "shared/sfx/whoosh_clean.mp3")
+    raw_path = output_path + ".raw.mp4"
+    if render_remotion_overlay(comp_id, raw_path, props, codec="h264"):
+        # Re-encode video (normalize timebase) and mix swoosh SFX
+        if os.path.exists(swoosh_path):
+            # Mix swoosh SFX with silence padding to match duration
+            audio_filter = (
+                f"[1:a]apad=whole_dur={duration}[sfx];[sfx]aresample=24000[out]"
+            )
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-i",
+                raw_path,
+                "-i",
+                swoosh_path,
+                "-filter_complex",
+                audio_filter,
+                "-map",
+                "0:v",
+                "-map",
+                "[out]",
+                *gpu_enc_args(),
+                "-c:a",
+                "aac",
+                "-b:a",
+                "64k",
+                "-t",
+                str(duration),
+                "-shortest",
+                output_path,
+            ]
+        else:
+            # Fallback: silent audio if no swoosh file
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-i",
+                raw_path,
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=r=24000:cl=mono",
+                "-map",
+                "0:v",
+                "-map",
+                "1:a",
+                *gpu_enc_args(),
+                "-c:a",
+                "aac",
+                "-b:a",
+                "64k",
+                "-t",
+                str(duration),
+                "-shortest",
+                output_path,
+            ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if os.path.exists(raw_path):
+            os.remove(raw_path)
+        if os.path.exists(output_path):
+            return True
+
+    # Fallback to FFmpeg
+    if os.path.exists(raw_path):
+        os.remove(raw_path)
+    return _create_topic_card_ffmpeg(
+        output_path, title, team_color, width, height, duration
+    )
+
 
 # ============================================================================
 # VISUAL TYPE DEFINITIONS
@@ -954,6 +1338,8 @@ def process_video_clip(
         str(duration),
         "-vf",
         filter_complex,
+        "-r",
+        "30",
         *gpu_enc_args(),
         "-an",
         output_path,
@@ -1009,7 +1395,7 @@ def _create_multishot_longform_segment(
 
         # Fill in missing footage field using naming convention
         if not shot.get("footage"):
-            from shot_assembler import get_shot_source_ext, shot_footage_filename
+            from src.shot_assembler import get_shot_source_ext, shot_footage_filename
 
             ext = get_shot_source_ext(shot.get("source_type", "youtube_clip"))
             convention_name = shot_footage_filename(segment_idx, shot_idx, ext)
@@ -1127,6 +1513,52 @@ def create_segment_video(
 
     segment_work_dir = os.path.join(work_dir, f"segment_{segment_idx:02d}")
     os.makedirs(segment_work_dir, exist_ok=True)
+
+    # Remotion outro path: render animated CTA card for outro/cta segments
+    context_lower = segment.get("context", "").lower()
+    if any(kw in context_lower for kw in ("outro", "cta")):
+        composition = "Outro4K" if width >= 3840 else "Outro"
+        outro_rendered = os.path.join(segment_work_dir, "outro_remotion_raw.mp4")
+        outro_final = os.path.join(segment_work_dir, "outro_remotion.mp4")
+        props = {"duration": audio_duration, "teamColor": "#E10600"}
+        if render_remotion_overlay(composition, outro_rendered, props, codec="h264"):
+            # Re-encode to match assembler timebase/framerate
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-i",
+                outro_rendered,
+                "-r",
+                "30",
+                *gpu_enc_args(),
+                "-pix_fmt",
+                "yuv420p",
+                "-an",
+                outro_final,
+            ]
+            subprocess.run(cmd, capture_output=True, text=True)
+            if os.path.exists(outro_final):
+                # Combine with audio
+                cmd2 = [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    outro_final,
+                    "-i",
+                    audio_path,
+                    "-c:v",
+                    "copy",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "128k",
+                    "-shortest",
+                    output_path,
+                ]
+                subprocess.run(cmd2, capture_output=True, text=True)
+                if os.path.exists(output_path):
+                    return True, "", "remotion_outro"
+        print("      Remotion outro failed, falling back to footage...")
 
     # Multi-shot path: content-driven visual changes
     has_shots = "shots" in segment and len(segment.get("shots", [])) > 1
@@ -1246,17 +1678,26 @@ def create_segment_video(
         footage_path = os.path.normpath(footage_path)
         if os.path.exists(footage_path):
             clip_path = os.path.join(segment_work_dir, "clip_00.mp4")
-            start_time = segment.get("footage_start", 0)
-            if process_video_clip(
-                footage_path,
-                clip_path,
-                audio_duration,
-                width,
-                height,
-                start_time=start_time,
-            ):
-                clip_files.append(clip_path)
-                visual_type_used = "pre_downloaded"
+            ext = os.path.splitext(footage_path)[1].lower()
+            if ext in (".jpg", ".jpeg", ".png", ".webp"):
+                effect = segment.get("ken_burns", "zoom_in")
+                if create_image_clip(
+                    footage_path, clip_path, audio_duration, width, height, effect
+                ):
+                    clip_files.append(clip_path)
+                    visual_type_used = "pre_downloaded"
+            else:
+                start_time = segment.get("footage_start", 0)
+                if process_video_clip(
+                    footage_path,
+                    clip_path,
+                    audio_duration,
+                    width,
+                    height,
+                    start_time=start_time,
+                ):
+                    clip_files.append(clip_path)
+                    visual_type_used = "pre_downloaded"
 
     # Try YouTube clips if no pre-downloaded footage and YouTube routing decided
     if (
@@ -1790,6 +2231,16 @@ def main():
     parser.add_argument(
         "--analyze", action="store_true", help="Analyze script and show visual routing"
     )
+    parser.add_argument(
+        "--no-lower-thirds",
+        action="store_true",
+        help="Skip lower-third story title overlays",
+    )
+    parser.add_argument(
+        "--no-topic-cards",
+        action="store_true",
+        help="Skip topic transition cards between stories",
+    )
     args = parser.parse_args()
 
     project_dir = get_project_dir(args.project)
@@ -1923,12 +2374,27 @@ def main():
                 if apply_color_grade(output_path, graded_path, grade):
                     os.replace(graded_path, output_path)
 
+            # Apply lower-third overlay for news segments
+            lt_label = ""
+            if not args.no_lower_thirds:
+                lt_title = get_lower_third_title(segment)
+                if lt_title:
+                    tc = get_team_color(
+                        segment.get("text", "") + " " + segment.get("context", "")
+                    )
+                    lt_path = f"{temp_dir}/segment_{i:02d}_lt.mp4"
+                    if apply_lower_third(
+                        output_path, lt_path, lt_title, tc, width, height
+                    ):
+                        os.replace(lt_path, output_path)
+                        lt_label = " +lt"
+
             segment_videos.append(output_path)
             dur = get_duration(output_path)
             segment_durations.append(dur)
             visual_stats[vtype] = visual_stats.get(vtype, 0) + 1
             grade_label = f" grade={grade}" if grade != "none" else ""
-            print(f"    Done ({dur:.1f}s) [{vtype}{grade_label}]")
+            print(f"    Done ({dur:.1f}s) [{vtype}{grade_label}{lt_label}]")
         else:
             print(f"    Failed: {error}")
 
@@ -1951,6 +2417,28 @@ def main():
         outro_path = f"{temp_dir}/outro.mp4"
         if create_outro_video(outro_path, width, height):
             segment_videos.append(outro_path)
+
+    # Insert topic transition cards between news stories
+    if not args.no_topic_cards:
+        cards_inserted = 0
+        intro_offset = 1 if (intro_path and os.path.exists(intro_path)) else 0
+        for i, segment in enumerate(segments):
+            # Skip hook (0), logo (1), hook-continuation (2), and outro (last)
+            if i < 3 or i == len(segments) - 1:
+                continue
+            lt_title = get_lower_third_title(segment)
+            if lt_title:
+                tc = get_team_color(
+                    segment.get("text", "") + " " + segment.get("context", "")
+                )
+                card_path = f"{temp_dir}/topic_card_{i:02d}.mp4"
+                if create_topic_card(card_path, lt_title, tc, width, height):
+                    insert_idx = i + intro_offset + cards_inserted
+                    segment_videos.insert(insert_idx, card_path)
+                    segment_durations.insert(insert_idx, TOPIC_CARD_DURATION)
+                    cards_inserted += 1
+        if cards_inserted:
+            print(f"\nInserted {cards_inserted} topic transition cards")
 
     # Concatenate
     print(f"\nConcatenating {len(segment_videos)} segments...")

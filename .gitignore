@@ -28,5 +28,8 @@ shared/assets/**/*.mp4
 shared/assets/**/*.mov
 shared/assets/**/*.avi
 
+# Node modules
+node_modules/
+
 # Documentation
 docs/
