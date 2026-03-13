@@ -22,7 +22,7 @@ On first run, a browser window will open for OAuth consent. The token is saved t
 
 ## Instructions
 
-### 1. Identify Project Folders
+### 1. Identify and Filter Project Folders
 
 List all folders in the `projects/` directory:
 
@@ -30,12 +30,32 @@ List all folders in the `projects/` directory:
 ls -d projects/*/
 ```
 
-If arguments were provided, validate that each folder exists (check for `projects/{name}/`). If any don't exist, warn and skip.
+**Filter by upload status:** For each project folder, check if `upload_info.json` exists and contains `"upload_status": "uploaded"`. Only projects with this status are eligible for archiving by default.
 
-If no arguments were provided, display the list of project folders with sizes and ask the user which ones to archive. Accept:
-- `all` to archive everything
-- Space or comma-separated project names
-- A pattern like `f1-daily-news-*`
+```bash
+# Check upload status for each project
+for dir in projects/*/; do
+  name=$(basename "$dir")
+  if [ -f "$dir/upload_info.json" ] && grep -q '"upload_status": "uploaded"' "$dir/upload_info.json"; then
+    echo "[UPLOADED]     $name"
+  else
+    echo "[IN-PROGRESS]  $name"
+  fi
+done
+```
+
+Display two groups:
+- **Ready to archive (uploaded):** Projects with `"upload_status": "uploaded"` in their `upload_info.json`
+- **Skipped (in-progress):** Projects without `upload_info.json` or without `"upload_status": "uploaded"`
+
+In-progress projects are **excluded by default**. To archive them anyway, the user must explicitly name them as arguments or confirm when prompted.
+
+If arguments were provided, validate that each folder exists (check for `projects/{name}/`). If any don't exist, warn and skip. If an explicitly named project is in-progress (not uploaded), warn the user but proceed if they confirm.
+
+If no arguments were provided, display the filtered list and ask the user which ones to archive. Accept:
+- `all` to archive all **uploaded** projects only
+- Space or comma-separated project names (can include in-progress if explicitly named)
+- A pattern like `f1-daily-news-*` (only matches uploaded projects unless forced)
 
 If no project folders exist, inform the user there's nothing to archive.
 

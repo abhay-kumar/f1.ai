@@ -1,419 +1,99 @@
 # Create F1 Podcast
 
-Create an F1 Burnouts podcast episode with the host discussing the provided topics directly with the audience. The content must be **engaging, funny, intriguing, and sometimes sarcastic** - leveraging Gemini TTS with SSML for expressive, professional podcast delivery.
+Create an F1 Burnouts podcast episode (~20 minutes) with the host discussing provided topics directly with the audience.
 
 ## Parameters
 
-- `$ARGUMENTS` - Synopsis/topics for the podcast episode (required). Can be a single topic or comma-separated list.
-
-## The Host
-
-The podcast features a single passionate host speaking directly to the audience:
-
-### The Host of F1 Burnouts
-- **Voice**: Charon (Gemini TTS) - Informative, engaging, authoritative
-- **Background**: Expert in both engineering and F1 motorsport regulations/history
-- **Team Affinity**: Proud McLaren fan (and not shy about it!) but respects all teams
-- **Core Values**: 
-  - Objective and fair - gives credit where due, critical when warranted (even of McLaren)
-  - Passionate about engineering excellence across all teams
-  - Cares deeply about climate change initiatives in F1
-  - Strong advocate for women in F1
-  - Wishes well for underperforming teams and departing drivers/teams
-- **Personality Traits**:
-  - Witty and quick with comebacks
-  - Self-aware about their own biases (and jokes about it)
-  - Finds humor in F1's absurdities and drama
-  - Can be delightfully sarcastic when the situation calls for it
-  - Genuinely cares about the sport and its future
-- **Tone**: 
-  - Immersive storytelling with intrigue
-  - Humor and sarcasm woven throughout
-  - Heartfelt when the moment calls for it
-  - Brutal honesty when needed
-  - Family-friendly (no swearing) - engages kids and adults alike
-- **Speaking Style**: Conversational, as if talking directly to a friend about F1
-
-## TTS Engine: Google Gemini 2.5 with SSML
-
-This podcast uses **Google Gemini 2.5 TTS** with **comprehensive SSML enhancement** for immersive, expressive audio.
-
-### Why Gemini TTS?
-- **Free tier available** (gemini-2.5-flash-preview-tts)
-- **Emotion markers** directly in text: `[excited]`, `[sarcastic]`, `[whispering]`
-- **Full SSML support** for pauses, emphasis, and prosody control
-- **Natural speech** with context-aware pacing
-- **Hybrid control**: Mix [markers] and SSML tags for maximum expressiveness
-
-### SSML Features (Auto-Applied by ssml_generator.py)
-
-The script is automatically enhanced with professional podcast SSML:
-
-#### 1. Strategic Pauses (`<break>`)
-- **After greetings**: Let the energy land (0.9s after "Welcome back!")
-- **Before reveals**: Build anticipation (0.6s before "But here's the thing...")
-- **Comedic timing**: Perfect pause after setup, before punchline
-- **Rhetorical questions**: Let them sink in (0.7s after "?")
-- **Transitions**: Smooth segment changes (0.4-0.5s)
-
-#### 2. Word Emphasis (`<emphasis>`)
-- **Strong**: "incredible", "billion", "never", "championship"
-- **Moderate**: "actually", "crucial", "amazing", "exactly"
-- **Reduced**: Intimate phrases like "just between us"
-
-#### 3. Number Processing (`<say-as>`)
-- Years: "2024" reads as "twenty twenty-four"
-- Large numbers: "1,000,000" reads naturally
-- Percentages: "50%" reads as "fifty percent"
-- Lap times: "1:23.456" reads properly
-
-#### 4. Emotion Markers (Gemini-specific)
-```
-[excited]      - High energy, celebrations
-[sarcastic]    - Dry humor, ironic observations
-[empathetic]   - Heartfelt moments, tributes
-[speaking slowly] - Dramatic emphasis
-[whispering]   - Intimate asides
-[laughing]     - Genuine humor moments
-[sighing]      - Exasperation, reflection
-```
-
-### Available Voices
-- **Charon** (default) - Informative, authoritative (ideal for podcasts)
-- **Kore** - Firm, confident
-- **Puck** - Upbeat, energetic
-- **Zephyr** - Bright, lively
-- **Enceladus** - Breathy, intimate
-- **Aoede** - Breezy, conversational
+- `$ARGUMENTS` - Synopsis/topics for the episode (required). Single topic or comma-separated list.
 
 ## Instructions
 
-You are creating a ~20 minute podcast episode where the host speaks directly to the audience about F1 topics. **The content must be engaging, funny, intriguing, and sometimes sarcastic.**
+> Host persona, voice patterns, and quality checklist: see **f1-podcast-voice** skill
+> Script writing guidelines: see **f1-scriptwriting** skill
+
+### TTS Engine: Google Gemini 2.5 with SSML
+
+- **Free tier**: gemini-2.5-flash-preview-tts
+- **Emotion markers** in text: `[excited]`, `[sarcastic]`, `[whispering]`
+- **Full SSML support**: pauses, emphasis, prosody (auto-applied by `ssml_generator.py`)
+- **Available voices**: Charon (default, authoritative), Kore (firm), Puck (upbeat), Zephyr (bright), Enceladus (breathy), Aoede (breezy)
 
 ### Project Structure
 ```
-projects/{project-name}/
+projects/{name}/
 ├── script.json         # Podcast script with segments
 └── output/
-    ├── cover_art.jpg   # Podcast cover art (1400x1400)
+    ├── cover_art.jpg   # Podcast cover (1400x1400)
     └── final.mp3       # Final podcast with intro/outro music
 ```
 
 ### Workflow
 
-1. **Parse Topics**: Extract the topics/synopsis from `$ARGUMENTS`
+1. **Parse Topics**: Extract topics from `$ARGUMENTS`
 
-2. **Review Previous Episodes** (REQUIRED): Build continuity with past episodes.
-   - Fetch the RSS feed at `https://media.rss.com/f1-burnouts/feed.xml` using WebFetch to get episode list and transcript URLs
-   - Fetch transcripts from the most recent 2-3 episodes (transcript URLs follow pattern `https://transcripts.rss.com/368455/{id}/transcript`)
-   - Build a **"Previously Covered" summary** noting:
-     - Key topics already discussed in depth — don't re-explain them, reference them: "As we covered in last week's episode...", "Remember when we talked about..."
-     - Running jokes, catchphrases, or narrative threads worth continuing
-     - Predictions made that can now be revisited with new data ("Remember when I predicted X? Well...")
-     - Hot takes from previous episodes that new facts might confirm or contradict
-   - Use this context to:
-     - **Reference back** naturally 1-2 times per episode ("If you caught last week's episode...", "We ranked the teams last week and...")
-     - **Avoid repetition** — if a topic was covered in depth previously (e.g., active aero basics in Episode 3, fuel revolution in Episode 1), don't re-explain it. Instead, build on it with what's NEW
-     - **Continue narratives** — pick up threads (e.g., if Aston Martin was ranked last in the Week 1 episode, reference that ranking when discussing their Week 2 performance)
+2. **Review Previous Episodes** (REQUIRED): Fetch `https://media.rss.com/f1-burnouts/feed.xml` via WebFetch. Read transcripts from recent 2-3 episodes. Build a "Previously Covered" summary: key topics, running jokes, predictions to revisit, hot takes to confirm/contradict. Use for back-references and avoiding repetition.
 
-3. **Research F1 Media Commentary** (REQUIRED): Find what pundits and media are saying about this episode's topics.
-   - Web search for commentary from **Sky Sports F1, The Race, Autosport, PlanetF1, GPFans, and Motorsport.com** on the episode's topics
-   - Look specifically for:
-     - **Controversial opinions** or active debates between pundits (e.g., Brundle vs Croft, different analyst predictions)
-     - **Hot takes** that the host can agree with, push back on, or riff off
-     - **Interesting quotes** from team principals, drivers, engineers, or analysts that can be woven in naturally
-     - **Under-reported angles** that mainstream coverage is missing but the host can spotlight
-   - Build a **"Media Talking Points"** list (aim for 3-5 points) to weave into the script:
-     - "Martin Brundle made an interesting point on Sky — he said X, and honestly, I think he's spot on / completely wrong because..."
-     - "There's a debate raging on The Race about whether..."
-     - "Damon Hill predicted X — and I've got to say, that's either genius or delusional..."
-   - Attribute sources naturally in speech (never "quote... end quote" — see quoting guidelines below)
+3. **Research F1 Media Commentary** (REQUIRED): Web search Sky Sports F1, The Race, Autosport, PlanetF1, GPFans, Motorsport.com. Find controversial opinions, hot takes, interesting quotes, under-reported angles. Build 3-5 "Media Talking Points" to weave into script.
 
-4. **Research Current Facts** (if needed): Search web for recent facts, statistics, technical details, and quotes specific to the episode's topics
+4. **Research Current Facts** (if needed): Web search for stats, technical details, quotes
 
-5. **Generate Script**: Create `script.json` with this podcast format:
+5. **Generate Script**: Create `script.json`:
    ```json
    {
-     "title": "Podcast Episode Title",
+     "title": "Episode Title",
      "format": "podcast",
      "duration_target": 1200,
      "tts_engine": "gemini",
      "voice": "Charon",
-     "host": {
-       "name": "Host",
-       "description": "The host of F1 Burnouts - engineering expert and F1 historian"
-     },
+     "host": { "name": "Host", "description": "The host of F1 Burnouts" },
      "segments": [
-       {
-         "id": 1,
-         "text": "Welcome back to F1 Burnouts! I'm your host, and today we're diving into...",
-         "context": "Intro",
-         "emotion": "energetic"
-       },
-       {
-         "id": 2,
-         "text": "Now, let me tell you why this matters...",
-         "context": "Main topic",
-         "emotion": "intrigued"
-       }
+       { "id": 1, "text": "Welcome back to F1 Burnouts!...", "context": "Intro", "emotion": "energetic" },
+       { "id": 2, "text": "Now, let me tell you why this matters...", "context": "Main topic", "emotion": "intrigued" }
      ]
    }
    ```
 
-6. **Script Guidelines - MAKING IT ENGAGING**:
+6. **Script Guidelines**:
+   - **Target**: ~20 minutes (~3000-3500 words total)
+   - **Flow**: Hook → Intro → Deep dives → Hot takes → Heartfelt moment → Sign-off
+   - **Content**: Engineering depth, historical context, balanced criticism, strong opinions
+   - **Previous episodes**: Reference naturally 1-2 times, don't re-explain covered topics
+   - **Media commentary**: Weave in 2-3 pundit opinions as natural conversation points
+   - **Emotion markers**: Place at start of emotionally distinct passages, sparingly
 
-   **STORYTELLING & INTRIGUE**:
-   - Hook the audience in the first 10 seconds with something surprising or provocative
-   - Build narratives with tension, reveals, and payoffs
-   - Use cliffhangers within segments ("But wait... it gets better")
-   - Drop hints about what's coming ("You're not going to believe what happened next")
-   - Create mystery: "There's one detail that everyone seems to be missing..."
+7. **CHECKPOINT - Script Review**: Present complete script with segments, emotions, estimated duration (~150 words/min). **STOP and wait for user approval.**
 
-   **HUMOR & SARCASM**:
-   - F1 is inherently dramatic - lean into the absurdity
-   - Sarcasm works best when it's self-aware and affectionate
-   - Mock predictable outcomes: "In news that shocked absolutely no one..."
-   - Playful jabs at team tendencies: "Ferrari doing Ferrari things"
-   - Self-deprecating humor about your own McLaren bias
-   - Timing is everything - set up, pause, deliver
-   
-   **EMOTION & VARIATION**:
-   - Alternate between energy levels - don't be one-note
-   - Go from excited to contemplative to sarcastic to heartfelt
-   - Use silence (pauses) as a tool - let big moments breathe
-   - Show genuine passion for the sport, not manufactured enthusiasm
-   - Be vulnerable when appropriate - share real reactions
-
-   **DIRECT AUDIENCE ENGAGEMENT**:
-   - Speak TO the audience, not at them ("you", "let me tell you", "think about this")
-   - Pose rhetorical questions and pause
-   - Anticipate and address counter-arguments
-   - Create inside jokes that return throughout the episode
-   - Make the listener feel like they're in on something
-
-   **QUOTING PEOPLE NATURALLY**:
-   - NEVER write "quote ... end quote" — it sounds robotic in spoken audio
-   - Instead, weave quotes naturally: "He called it spectacular", "In his words, the car just felt alive"
-   - Use lead-ins like "He goes...", "She put it perfectly...", "His response was classic..."
-   - For longer quotes, just shift into the person's voice naturally with a setup: "Newey said — and I love this — I never look at my designs as aggressive."
-   - The listener should feel like they're hearing the quote, not being told one exists
-
-   **CONTENT DEPTH**:
-   - Engineering depth: Explain technical concepts accessibly but accurately
-   - Historical context: Connect current events to F1 history
-   - Balanced criticism: Praise AND critique where deserved (including McLaren)
-   - Hot takes: Don't be afraid to have strong opinions (but defend them)
-
-   **PREVIOUS EPISODE CONTINUITY** (from Step 2 research):
-   - Reference previous episodes naturally 1-2 times: "If you caught last week's episode...", "We ranked the teams last week and...", "Remember when I predicted..."
-   - Don't re-explain topics covered in depth previously — build on them with what's NEW
-   - Continue running narratives across episodes (e.g., team rankings, prediction tracking)
-   - Revisit past predictions with new data: "I said X would happen — and guess what..."
-
-   **MEDIA COMMENTARY INTEGRATION** (from Step 3 research):
-   - Weave in 2-3 pundit opinions or hot takes as natural conversation points
-   - Agree, disagree, or riff off them: "Brundle made an interesting point — he said X, and I think he's absolutely right / completely wrong because..."
-   - Use media debates as segment hooks: "There's a debate raging right now about whether..."
-   - Attribute sources conversationally, never robotically
-   - Use under-reported angles from media research to offer unique value listeners can't get elsewhere
-   
-   **STRUCTURE**:
-   - **Target duration**: ~20 minutes (approximately 3000-3500 words total)
-   - **Flow**: Hook -> Intro -> Deep dives -> Hot takes -> Heartfelt moment -> Sign-off
-   - Vary segment lengths - not everything needs equal time
-   - End strong - the last impression matters
-
-7. **Writing for Gemini TTS with SSML**:
-
-   The `ssml_generator.py` will automatically enhance your script, but write with these features in mind:
-
-   **PUNCTUATION FOR PACING**:
-   ```
-   Ellipses (...) = trailing off, building suspense
-   Em-dashes (—) = interruptions, asides, dramatic interjections  
-   Exclamation marks = energy (use sparingly!)
-   Question marks = pause for thought
-   ```
-
-   **EMOTION MARKERS IN TEXT** (Gemini reads these as instructions):
-   ```
-   "[excited] And this is where it gets absolutely wild!"
-   "[speaking slowly] Think about that for a moment."
-   "[sarcastic] Oh, what a surprise, another Ferrari strategy error."
-   "[whispering] Now, here's something most people don't know..."
-   "[laughing] I mean, you can't make this stuff up!"
-   ```
-
-   **WHEN TO USE INLINE MARKERS**:
-   - At the START of emotionally distinct passages
-   - For dramatic delivery shifts mid-segment
-   - Sparingly - one per paragraph maximum
-   - For comedic effect (sarcasm, mock surprise)
-
-   **PHRASES THAT TRIGGER AUTO-PAUSES**:
-   - "Welcome back to..." (0.9s pause after)
-   - "But here's the thing..." (0.6s pause before)
-   - "And in news that shocked no one..." (0.7s pause after)
-   - Questions ending in "?" (0.7s pause after)
-   - "Now," at start of sentence (0.5s pause before)
-
-   **WORDS THAT GET AUTO-EMPHASIZED**:
-   - Strong: incredible, billion, never, first, championship, zero
-   - Moderate: actually, crucial, exactly, really
-
-8. **Emotional Markers** (segment metadata for SSML enhancement):
-   
-   | Emotion | Use For | Gemini Marker | Prosody |
-   |---------|---------|---------------|---------|
-   | `energetic` | Exciting moments, celebrations | `[excited]` | Fast, high pitch |
-   | `intrigued` | Mysteries, revelations, setups | `[intrigued]` | Slower, curious |
-   | `contemplative` | Thoughtful analysis, reflection | `[speaking slowly]` | Slow, lower pitch |
-   | `humorous` | Jokes, light moments | `[playful]` | Normal, slight lift |
-   | `sarcastic` | Dry humor, ironic observations | `[sarcastic]` | Slower, deadpan |
-   | `heartfelt` | Tributes, emotional moments | `[empathetic]` | Slow, soft |
-   | `serious` | Critical analysis, concerns | `[serious]` | Slow, lower pitch |
-   | `passionate` | Advocacy, engineering appreciation | `[passionate]` | Fast, high energy |
-
-9. **CHECKPOINT - Script Review**:
-   - Present the complete script to the user
-   - Show all segments with text, context, and emotion
-   - Display estimated duration based on word count (~150 words/minute)
-   - **STOP and wait for user approval**
-   - Make any requested changes before proceeding
-
-10. **Generate Audio & Add Music**:
+8. **Generate Audio & Add Music**:
    ```bash
-   # Step 1: Generate podcast audio (CHUNKED MODE - prevents voice degradation)
+   # Step 1: Generate podcast audio (CHUNKED MODE — prevents voice degradation)
    python3 src/gemini_podcast_audio_generator.py --project {name} --chunked
 
-   # Step 2: Add intro/outro music (always use --output to avoid creating a redundant file)
+   # Step 2: Add intro/outro music
    python3 src/podcast_music_mixer.py --project {name} \
      --music shared/music/podcast_default.mp3 \
      --documentary \
      --output projects/{name}/output/final.mp3
    ```
 
-   **Why Chunked Mode?**
-   Gemini TTS voice quality degrades after ~4 minutes of continuous generation (becomes raspy, strained).
-   The `--chunked` mode splits content into ~250-word chunks (~60-90 seconds each), keeping each TTS
-   request short enough for consistent voice quality. SSML is preserved within each chunk.
+   **Options**: `--model pro` (paid, highest quality), `--voice Kore`, `--preview` (transcript preview), `--dry-run` (music preview)
 
-   **Audio Generator Options:**
-   - `--chunked` - **REQUIRED for podcasts > 5 minutes** (prevents voice degradation)
-   - `--model pro` - Use Pro model (paid, highest quality)
-   - `--voice Kore` - Change voice (default: Charon)
-   - `--preview` - Preview transcript and voice profile
-   - `--legacy` - Use old segment-by-segment mode (not recommended)
+   **WARNING**: Always use `--chunked` for podcasts > 5 minutes — voice degrades after ~4 min without it.
 
-   **WARNING**: Do NOT use default single-request mode for long podcasts - voice will degrade after ~4 min.
-   
-   **Music Mixer Options:**
-   - `--documentary` - Clean intro/outro only (recommended)
-   - `--dry-run` - Preview music placement
+9. **Verify Output**: Check duration matches expectations, smooth transitions, report final audio location.
 
-11. **Verify Output**:
-   - Check total duration matches expectations
-   - Ensure smooth transitions between segments
-   - Report final audio location
+### Technical Notes
 
-### Voice & Style Patterns
+#### Gemini TTS Voice Degradation
+Chunked mode splits into ~250-word chunks (~60-90s each), keeping each TTS request under the degradation threshold. SSML preserved within chunks.
 
-**ENGAGEMENT HOOKS**:
+#### Gemini TTS Ad-Lib Fix
+Gemini sometimes generates extra speech in the last chunk. Detect with silence detection:
+```bash
+ffmpeg -i projects/{name}/audio/chunk_NNN.mp3 -af "silencedetect=noise=-28dB:d=0.3" -f null - 2>&1 | grep silence | tail -5
 ```
-"Now, here's where it gets interesting..."
-"Stay with me on this one..."
-"I know what you're thinking, but hear me out..."
-"Let's break this down together..."
-"You're going to love this..."
-"Okay, buckle up for this one..."
-"I need to tell you something that's been bothering me..."
-```
+Fix: trim at silence gap (`ffmpeg -y -i chunk.mp3 -t {cut_point} -c:a libmp3lame -b:a 256k chunk.mp3`) or delete and regenerate.
 
-**BUILDING INTRIGUE**:
-```
-"There's something nobody's talking about..."
-"And here's the detail everyone missed..."
-"But wait... it gets even better."
-"Now, what they don't tell you is..."
-"The real story? Nobody wants to admit this..."
-```
-
-**SARCASM & HUMOR**:
-```
-"[sarcastic] Oh, what a surprise, another penalty that totally makes sense..."
-"And in news that shocked absolutely no one..."
-"Because obviously, that's exactly what everyone predicted..."
-"[laughing] I mean, you can't make this stuff up!"
-"Ferrari being Ferrari, as they say..."
-"In other breaking news, water is wet..."
-"Ah yes, the classic 'we need to talk about strategy' post-race radio..."
-```
-
-**MCLAREN REFERENCES (balanced)**:
-```
-"Look, I'm a McLaren fan, you all know that, but even I have to admit..."
-"As much as it pains my papaya-loving heart..."
-"Now, this is where my McLaren bias might show, but objectively speaking..."
-"[sighing] Being a McLaren fan builds character, I'll tell you that..."
-```
-
-**ENGINEERING APPRECIATION**:
-```
-"The engineering behind this is absolutely brilliant..."
-"This is where the physics gets beautiful..."
-"The regulations say X, but the clever interpretation is..."
-"Now, from an engineering perspective, this is actually genius..."
-```
-
-**HEARTFELT MOMENTS**:
-```
-"[empathetic] This is what F1 is really about..."
-"You have to respect the journey..."
-"Regardless of the team, that's a human being who gave everything..."
-"[speaking slowly] Take a moment to appreciate what we just witnessed..."
-```
-
-**CRITICAL BUT FAIR**:
-```
-"I love this team, but let's be honest here..."
-"Credit where it's due, but also..."
-"This isn't criticism for its own sake - this matters because..."
-"I hate to say it, but someone needs to..."
-```
-
-**SIGN-OFFS**:
-```
-"[excited] That's all for today's episode of F1 Burnouts. Until next time, keep the rubber on the track!"
-"Thanks for listening - now go argue with someone about this on the internet. That's what F1 fans do."
-"If you enjoyed this, share it with a friend who needs more F1 drama in their life."
-```
-
-### Example Segment with Full SSML Enhancement
-
-**Script text** (what you write):
-```
-"Welcome back to F1 Burnouts! Today we're diving into something absolutely wild. [sarcastic] And in news that shocked absolutely no one... Ferrari has once again found a creative way to throw away a race win. Now, here's the thing — and I say this as someone who genuinely respects the Scuderia — their strategy team seems to be operating on a different timeline than the rest of us. But wait... it gets better. Let me tell you what happened next."
-```
-
-**After SSML processing** (what Gemini TTS receives):
-```
-[excited] Welcome back to F1 Burnouts! <break time='0.9s'/> Today we're diving into something <emphasis level="strong">absolutely</emphasis> wild. [sarcastic] And in news that <emphasis level="strong">shocked</emphasis> <emphasis level="strong">absolutely</emphasis> <emphasis level="strong">no one</emphasis>... <break time='0.7s'/> Ferrari has once again found a creative way to throw away a race win. <break time='0.5s'/> Now, <break time='0.5s'/> here's the thing <break time='0.25s'/> and I say this as someone who <emphasis level="moderate">genuinely</emphasis> respects the Scuderia <break time='0.25s'/> their strategy team seems to be operating on a different timeline than the rest of us. <emphasis level="moderate">But</emphasis> wait... <break time='0.5s'/> it gets better. Let me tell <emphasis level="moderate">you</emphasis> what happened next.
-```
-
-### Output
-
-**Final Podcast**: `projects/{name}/output/final.mp3`
-- Format: MP3, 256kbps
-- Sample rate: 44.1kHz
-- Intro and outro music included
-- Loudness normalized to -16 LUFS
-- Duration: ~20 minutes
-
-## Background Music Integration
-
-Clean intro/outro music approach - voice content remains completely clean.
-
-### How It Works
+### Background Music
 
 | Section | Timing | Description |
 |---------|--------|-------------|
@@ -421,106 +101,13 @@ Clean intro/outro music approach - voice content remains completely clean.
 | **Content** | 00:12 - end-10s | Pure voice, NO music |
 | **Outro** | last 10s - end | Music fades in, swells after voice ends |
 
-### Podcast Music Track
+Default track: `shared/music/podcast_default.mp3` (energetic rock, ~2.5 min). Credit: Alex-Productions — No Copyright Music.
 
-Default track in `shared/music/podcast_default.mp3` (energetic rock, ~2.5 min)
+### Output
+**Final Podcast**: `projects/{name}/output/final.mp3` — MP3, 256kbps, 44.1kHz, intro/outro music, normalized to -16 LUFS, ~20 minutes.
 
-**Credit**: Track by [Alex-Productions](https://soundcloud.com/alexproductionsmusic) - No Copyright Music
-
-### Music Mixing Command
-
-```bash
-# Add intro/outro music (outputs to final.mp3)
-python3 src/podcast_music_mixer.py --project {name} \
-  --music shared/music/podcast_default.mp3 \
-  --documentary \
-  --output projects/{name}/output/final.mp3
-
-# Preview without processing
-python3 src/podcast_music_mixer.py --project {name} \
-  --music shared/music/podcast_default.mp3 \
-  --documentary --dry-run
-```
-
-### API Key Setup
-
-Get your free Google AI API key:
-1. Visit: https://aistudio.google.com/apikey
-2. Create/copy your API key
-3. Save it: `echo 'YOUR_KEY' > shared/creds/google_ai`
+### API Key
+Google AI: `shared/creds/google_ai` (free at https://aistudio.google.com/apikey)
 
 ### After Creation
-
-Suggest potential next steps:
-- Upload to podcast platform (RSS.com, Spotify, Apple Podcasts)
-- Generate transcript for show notes
-
-### Quality Checklist
-
-Before generating audio, verify the script has:
-- [ ] A hook in the first 10 seconds
-- [ ] At least 3 different emotion types used
-- [ ] Sarcasm/humor woven throughout (not just in one section)
-- [ ] Rhetorical questions that engage the listener
-- [ ] A heartfelt or reflective moment somewhere
-- [ ] McLaren reference(s) that are self-aware
-- [ ] References at least one previous episode naturally (continuity)
-- [ ] Includes at least 2 media commentary points (agree/disagree with pundits)
-- [ ] A strong closing that makes people want more
-- [ ] Proper use of punctuation for pacing (... — !)
-- [ ] Inline emotion markers for key delivery moments
-
-## Technical Notes
-
-### Gemini TTS Voice Degradation
-
-**Problem**: Gemini TTS voice quality degrades after ~4 minutes of continuous generation (becomes raspy, strained, "throat infection" effect).
-
-**Solution**: Always use `--chunked` mode for podcasts longer than 5 minutes:
-```bash
-python3 src/gemini_podcast_audio_generator.py --project {name} --chunked
-```
-
-**How it works**:
-- Splits script into ~250-word chunks (~60-90 seconds each)
-- Each chunk is a separate TTS request (stays under degradation threshold)
-- SSML and emotion markers are preserved within each chunk
-- Chunks are concatenated seamlessly
-
-**Avoid**:
-- Single-request mode (default) for long podcasts
-- Legacy segment-by-segment mode (`--legacy`)
-
-### Gemini TTS Ad-Lib Fix
-
-**Problem**: Gemini TTS sometimes generates extra speech beyond the script text in the last chunk (e.g., an improvised sign-off or repeated content). This results in unwanted voiceover during the outro music.
-
-**Detection**: After generating audio, check the last chunk for suspicious trailing content:
-```bash
-ffmpeg -i projects/{name}/audio/chunk_NNN.mp3 -af "silencedetect=noise=-28dB:d=0.3" -f null - 2>&1 | grep silence | tail -5
-```
-If there's a silence gap in the last ~15s followed by more speech, Gemini ad-libbed.
-
-**Fix**: Trim the last chunk at the silence gap before the ad-lib:
-```bash
-ffmpeg -y -i projects/{name}/audio/chunk_NNN.mp3 -t {cut_point} -c:a libmp3lame -b:a 256k projects/{name}/audio/chunk_NNN.mp3
-```
-Then re-run the audio generator (it will use cached chunks) and the music mixer.
-
-**Alternative**: Delete the last chunk and re-run the generator. Gemini doesn't always ad-lib — regenerating often produces a clean take.
-
-### Local TTS Alternative (Not Recommended for Podcasts)
-
-Qwen3-TTS 1.7B with MLX (`src/qwen_podcast_audio_generator.py`) is available but:
-- Produces more robotic output compared to Gemini
-- No SSML support - uses `instruct` parameter instead
-- Better suited for sleep/meditation content, not energetic podcasts
-
-### Podcast Music Details
-
-Default track: `shared/music/podcast_default.mp3` (symlink to `f1_invincible.mp3`)
-
-Music placement:
-- **Intro**: 0-12s at 80% volume, fades as voice starts
-- **Content**: Pure voice, no background music
-- **Outro**: Last 10s, music swells from 25% to 70% after voice ends
+Suggest: upload to podcast platform, generate transcript for show notes.

@@ -1,888 +1,230 @@
 # Create Long-Form Video
 
-Create a professional F1 long-form video (~10 minutes, 16:9 horizontal, up to 4K resolution) based on user's prompt. This command handles the entire pipeline from research to final video.
+Create a professional F1 long-form video (4-6 minutes, 16:9 horizontal, up to 4K resolution) based on user's prompt.
+
+**Quality-first process**: Script goes through iterative self-review before any production. See `.claude/prd-longform.json` for full acceptance criteria.
 
 ## User Input
 
 **Synopsis** (required): $ARGUMENTS
 
-The synopsis is the topic/story idea for the long-form video. This argument is mandatory.
-
 ## Instructions
 
-You are creating a **long-form horizontal video** (16:9, ~10 minutes) for YouTube standard format consumption. This is NOT a short or vertical video.
+You are creating a **long-form horizontal video** (16:9, 4-6 minutes) for YouTube standard format consumption.
+
+> Script writing guidelines: see **f1-scriptwriting** skill
+> Footage sourcing rules: see **f1-footage-sourcing** skill
+> Quality criteria: see **.claude/prd-longform.json** for acceptance criteria and anti-patterns
+
+### Key Principles (from channel analytics)
+- **4-6 minutes MAX** — Channel has 274 subs. Viewers won't commit to 17+ minutes from an unknown channel. Earn longer durations with a bigger audience.
+- **Every minute must earn its place** — If a segment doesn't move the story forward, cut it. No padding.
+- **Hook must work as a standalone Short** — The first 15 seconds should stop a scroll. If the hook isn't compelling enough for Shorts, it's not compelling enough for long-form.
+- **Curiosity gap titles** — "The Man With More F1 Races Than Any Driver" (12K views) >>> "F1 Testing Recap" (7 views)
+- **Tags are mandatory** — Previous long-form videos shipped with ZERO tags. Include 15+ relevant tags.
 
 ### Key Differences from Shorts
 - **Format**: 16:9 horizontal (3840x2160 4K or 1920x1080 HD)
-- **Duration**: ~10 minutes (adjustable based on content)
-- **Depth**: In-depth coverage with multiple sections
+- **Duration**: 4-6 minutes (HARD LIMIT — not 10, not 15, not 20)
+- **Depth**: Story-driven with narrative tension, not an information dump
 - **References**: Every claim must have a source citation
 - **Script Approval**: User must approve script BEFORE any processing
 
 ### Project Structure
 ```
-f1.ai/
-├── projects/           # Each video gets its own folder
-│   └── {project-name}/
-│       ├── script.json     # Video script with segments + references
-│       ├── audio/          # Generated voiceovers (cached)
-│       ├── footage/        # Downloaded source clips + graphics
-│       ├── previews/       # Frame previews for verification
-│       ├── temp/           # Intermediate files
-│       └── output/         # Final video (final.mp4)
-├── shared/
-│   ├── music/              # Reusable background music
-│   ├── graphics/           # Reusable illustrations, charts, diagrams
-│   └── creds/              # API keys
-├── src/                    # Core modules
-│   ├── audio_generator.py
-│   ├── footage_downloader.py
-│   ├── video_assembler_longform.py  # 16:9 horizontal assembler
-│   ├── youtube_uploader_longform.py # Long-form uploader with references
-│   ├── preview_extractor.py
-│   └── fact_checker.py
-└── .claude/commands/
+projects/{name}/
+├── script.json      # Video script with segments + references
+├── audio/           # Generated voiceovers (cached)
+├── footage/         # Downloaded source clips + graphics
+├── previews/        # Frame previews for verification
+├── temp/            # Intermediate files
+└── output/          # Final video (final.mp4)
 ```
 
 ---
 
-## SCRIPTWRITING BEST PRACTICES
+## Visual Content Strategy
 
-### The Golden Rules of Engaging Content
+Long-form videos use a **YouTube-first visual approach**: YouTube clips for on-track action, stock images with Ken Burns effects for portraits/stills, quote overlays for speaker quotes, and AI-generated graphics for abstract concepts.
 
-#### 1. Hook First, Context Second
-- **First 10 seconds are critical** - Open with intrigue, not background
-- Start with a provocative question, surprising fact, or dramatic moment
-- Save the "In this video, we'll explore..." for AFTER the hook
+### Shot Source Types
 
-**BAD Opening:**
-> "Lewis Hamilton is one of the greatest Formula One drivers of all time. In this video, we'll look at his career."
+| Type | Use Case | Field |
+|------|----------|-------|
+| `youtube_clip` | Races, overtakes, celebrations | `footage_query` + `footage_start` |
+| `image` | People, historical, technical | `image_query` + `ken_burns` |
+| `quote_overlay` | Speaker quotes | Auto-detected or `speaker_name` + `quote_text` |
+| `veo3_video` | Abstract concepts (fuel, wind tunnels) | `footage_query` |
+| `graphic` | AI-generated diagrams | `graphic_description` |
 
-**GOOD Opening:**
-> "Forty-four. That's the number Lewis Hamilton saw when he looked at his championship standings after Abu Dhabi 2021. Not first. Second. And in that moment, everything changed."
-
-#### 2. Create Narrative Tension
-- Every great video has conflict, stakes, or mystery
-- Ask questions that demand answers
-- Create "open loops" - introduce ideas that pay off later
-- Use phrases like: "But what nobody expected was..." / "That's when everything fell apart..."
-
-#### 3. Show, Don't Just Tell
-- Instead of stating facts, paint scenes
-- Use sensory details: sounds, sights, atmosphere
-- Transport the viewer to the moment
-
-**TELLING:**
-> "Senna and Prost had a famous rivalry in 1989."
-
-**SHOWING:**
-> "The gravel flew. Metal scraped against metal. As Senna climbed out of his McLaren at Suzuka, he locked eyes with Prost across the runoff area. Neither man blinked. The 1989 championship had just exploded."
-
-#### 4. Vary Pacing and Rhythm
-- Alternate between fast, punchy segments and slower, reflective ones
-- Short sentences create urgency. They punch. They hit.
-- Longer, flowing sentences allow the viewer to breathe and absorb the weight of what you're describing, building anticipation for what comes next.
-- Use strategic pauses (segment breaks) for dramatic effect
-
-#### 5. The "So What?" Test
-Every segment must answer: "Why should the viewer care?"
-- Connect facts to emotions
-- Relate historical events to present-day implications
-- Show how this affects drivers, teams, or the sport
-
-### Content Structure for Maximum Engagement
-
-#### The 10-Minute Formula
-
-```
-[0:00-0:30]   COLD OPEN - The hook, no context needed
-[0:30-1:30]   SETUP - What we're exploring and why it matters
-[1:30-4:00]   ACT 1 - The beginning/origin of the story
-[4:00-4:30]   TRANSITION - Pivot point, things are about to change
-[4:30-7:00]   ACT 2 - The conflict/development/main action
-[7:00-7:30]   TRANSITION - The turning point
-[7:30-9:00]   ACT 3 - Resolution/climax/aftermath
-[9:00-9:45]   REFLECTION - What it means, legacy, impact
-[9:45-10:00]  CLOSE - Call to action, tease future content
-```
-
-#### Section Types and Their Purpose
-
-| Section | Purpose | Tone | Length |
-|---------|---------|------|--------|
-| `cold_open` | Hook viewer instantly | Dramatic, intriguing | 15-30s |
-| `intro` | Establish topic and stakes | Confident, inviting | 30-60s |
-| `origin` | Background, how it began | Narrative, scene-setting | 60-90s |
-| `rising_action` | Building tension/conflict | Escalating, engaging | 90-120s |
-| `climax` | Peak moment, main event | Intense, vivid | 60-90s |
-| `aftermath` | Immediate consequences | Reflective, impactful | 45-60s |
-| `analysis` | Expert insight, deeper meaning | Thoughtful, authoritative | 60-90s |
-| `legacy` | Long-term impact, relevance | Contemplative, connecting | 45-60s |
-| `conclusion` | Wrap up, final thoughts | Satisfying, memorable | 30-45s |
-
-### Writing Techniques for Intrigue
-
-#### The Curiosity Gap
-Introduce information that creates a gap between what viewers know and what they want to know:
-- "There's one race that Ferrari wishes everyone would forget."
-- "Only three people know what really happened in that meeting."
-
-#### Foreshadowing
-Plant seeds that pay off later:
-- "Little did Verstappen know, this decision would haunt him for years."
-- "Remember that corner. It becomes important later."
-
-#### Parallel Structure
-Connect past and present, or compare two stories:
-- "In 1976, Lauda walked through fire. In 2019, another driver faced a different kind of inferno."
-
-#### The Rule of Three
-Group information in threes for rhythm and memorability:
-- "He was fast. He was fearless. He was seventeen years old."
-
-### Avoiding Repetitive Content
-
-**REPETITION TO AVOID:**
-- Restating the same fact in different words
-- Summarizing what you just said
-- Repeating the thesis in every section
-- Using the same transition phrases
-
-**REPETITION THAT WORKS:**
-- Key phrases for emphasis ("And once again, Red Bull...")
-- Callback references to earlier points
-- Thematic echoes that tie the narrative together
-- Repeating a word for stylistic impact ("Champion. Champion of Britain. Champion of the world.")
-
-### Intuitive Storytelling
-
-Make complex topics accessible:
-- Use analogies viewers can relate to
-- Build from simple to complex
-- Define jargon when first used (but briefly)
-- Use concrete examples, not abstract concepts
-
-**ABSTRACT:**
-> "The aerodynamic regulations significantly impacted downforce generation."
-
-**INTUITIVE:**
-> "Imagine pressing your hand out a car window at highway speed. Now imagine doing that at 200 miles per hour. That's the force these new rules just took away from the cars."
-
----
-
-## VISUAL CONTENT STRATEGY
-
-### Long-Form Videos: Stock Image Approach
-
-**Long-form videos use STOCK IMAGES with Ken Burns effects instead of downloaded YouTube footage.**
-
-This approach is used by many successful informative YouTube channels and provides:
-- **Consistent quality**: High-resolution stock photos from Pexels/Unsplash
-- **No copyright issues**: Properly licensed images with attribution
-- **Professional look**: Ken Burns effects (zoom/pan) create engaging motion
-- **Quote overlays**: Speaker quotes displayed with their image
-- **Fast production**: No need to wait for video downloads
-
-### Visual Types for Long-Form
-
-| Type | Use Case | Script Field | Example |
-|------|----------|--------------|---------|
-| `image` | Most segments | `image_query` | Stock photos with Ken Burns |
-| `quote` | Direct quotes | Auto-detected | Quote card with speaker photo |
-| `graphic` | AI-generated diagrams | `graphic_description` | DALL-E generated (if credits available) |
-
-### Shot List (Multi-Visual Segments)
-
-For long-form content, use the `shots` array to control what appears on screen at each moment during narration. Long-form segments are typically 20-30 seconds, so they benefit from 3-6 shots per segment.
-
-**Shot source types for long-form:**
-- `youtube_clip`: On-track action, races, overtakes, celebrations (primary)
-- `image`: People, historical moments, technical details, team personnel (stock photos with Ken Burns)
-- `quote_overlay`: Speaker image + quote text (auto-detected or explicit)
-- `veo3_video`: Abstract concepts without specific F1 imagery (fuel chemistry, wind tunnels)
-- `remotion_animation`: Technical explainers (engine diagrams, aero comparisons) -- requires pre-rendering
-- `graphic`: AI-generated diagrams (DALL-E)
-
-**Transition preferences for long-form:**
-- `cross_dissolve` (0.5s): Default between related shots -- smooth, cinematic
+### Transition Preferences
+- `cross_dissolve` (0.5s): Default between related shots
 - `wipe_left` (0.3s): Topic changes, forward progression
-- `fade_to_black` (0.3s): Section transitions (intro -> main, act changes)
-- `cut`: Fast-paced action sequences, urgent moments
+- `fade_to_black` (0.3s): Section transitions
+- `cut`: Fast-paced action sequences
 - `whip_pan` (0.2s): Energetic transitions, comparisons
 
-**Example (historical narrative segment):**
+### Shot List Example
 ```json
-{
-  "id": 5,
-  "section": "rising_action",
-  "text": "But Mercedes saw an opportunity. Their engine division in Brixworth had been working on a radical new architecture for three years. When Alpine came calling, they were ready.",
-  "context": "Mercedes PU development backstory",
+{ "id": 5, "section": "rising_action",
+  "text": "But Mercedes saw an opportunity. Their engine division in Brixworth had been working on a radical new architecture.",
   "shots": [
-    {
-      "label": "Mercedes factory exterior",
-      "text_cue": "But Mercedes saw an opportunity. Their engine division in Brixworth",
-      "source_type": "image",
-      "image_query": "Mercedes F1 Brixworth factory engine",
-      "ken_burns": "zoom_out",
-      "transition_in": "fade_to_black"
-    },
-    {
-      "label": "Engine assembly CGI",
-      "text_cue": "had been working on a radical new architecture for three years.",
-      "source_type": "youtube_clip",
-      "footage_query": "Mercedes F1 power unit 2026 development",
-      "footage_start": 20,
-      "transition_in": "cross_dissolve"
-    },
-    {
-      "label": "Alpine-Mercedes handshake/deal",
-      "text_cue": "When Alpine came calling, they were ready.",
-      "source_type": "youtube_clip",
-      "footage_query": "Alpine Mercedes partnership announcement F1",
-      "footage_start": 5,
-      "transition_in": "wipe_left",
-      "color_grade": "cinematic"
-    }
-  ]
-}
+    { "label": "Mercedes factory", "text_cue": "But Mercedes saw an opportunity.", "source_type": "image", "image_query": "Mercedes F1 Brixworth factory", "ken_burns": "zoom_out", "transition_in": "fade_to_black" },
+    { "label": "Engine assembly", "text_cue": "Their engine division in Brixworth had been working on a radical new architecture.", "source_type": "youtube_clip", "footage_query": "Mercedes F1 power unit 2026", "footage_start": 20, "transition_in": "cross_dissolve" }
+] }
 ```
-
-### Ken Burns Effects
-
-The assembler automatically applies varied Ken Burns effects:
-- **zoom_in**: Slow zoom towards center - builds intensity
-- **zoom_out**: Pull back - reveals context
-- **pan_left/right**: Horizontal movement - implies progression
-- **zoom_pan_right**: Combined zoom and pan - dynamic focus
-
-Effects are automatically varied per segment for visual interest.
-
-### Quote Detection
-
-When the script contains quotes (phrases like "has said", "stated", "according to"), the system:
-1. Detects the speaker's name
-2. Fetches their image (if available)
-3. Displays a professional quote card overlay
-
-### Image Search Query Best Practices
-
-```
-GOOD: "sustainable energy technology"
-BAD:  "F1 2026 sustainable fuel explained video"
-
-GOOD: "hydrogen fuel cell laboratory"
-BAD:  "hydrogen fuel documentary interview"
-
-GOOD: "racing car pit stop action"
-BAD:  "F1 pit stop interview"
-```
-
-Use descriptive visual terms, not video-specific searches.
-
-### When Stock Footage Isn't Available
-
-Not all moments have fair-use footage. For these situations, use alternative visuals:
-
-#### 1. Motion Graphics & Illustrations
-Use for:
-- Technical explanations (aerodynamics, engine components)
-- Data visualization (lap times, championship points)
-- Timeline sequences
-- Comparison charts
-
-Mark in script.json:
-```json
-{
-  "footage_type": "graphic",
-  "footage_query": "GRAPHIC: Championship points progression 2021",
-  "graphic_description": "Animated line chart showing Verstappen vs Hamilton points through the 2021 season, with key races highlighted"
-}
-```
-
-#### 2. Map Animations
-Use for:
-- Circuit walkthroughs
-- Incident reconstructions
-- Geographic context (driver origins, race locations)
-
-```json
-{
-  "footage_type": "graphic",
-  "footage_query": "GRAPHIC: Silverstone circuit layout with crash location",
-  "graphic_description": "Top-down circuit map with animated car positions showing the 2021 Hamilton-Verstappen collision at Copse"
-}
-```
-
-#### 3. Still Images with Ken Burns Effect (Pan & Zoom)
-The Ken Burns effect transforms static images into dynamic visuals through slow pan and zoom movements. This is a proven documentary technique used by professionals.
-
-Use for:
-- Historical moments without video footage
-- Driver portraits during biographical sections
-- Newspaper headlines, magazine covers, documents
-- Team photos, podium celebrations
-- Circuit aerial views
-- Car technical photos
-
-**Motion Types:**
-| Motion | Best For | Example |
-|--------|----------|---------|
-| `slow_zoom_in` | Building intensity, focusing on detail | Driver's face before race start |
-| `slow_zoom_out` | Revealing context, showing scale | Crowd at a historic race |
-| `pan_left` | Following action, timeline progression | Car evolution over years |
-| `pan_right` | Transition, moving forward in story | From past to present |
-| `pan_up` | Revealing, dramatic reveal | From car to driver standing |
-| `pan_down` | Grounding, settling into scene | From sky to circuit |
-| `zoom_in_pan` | Dynamic focus | Zooming into newspaper headline |
-| `ken_burns_combo` | Complex movement | Slow zoom while panning |
-
-```json
-{
-  "footage_type": "image",
-  "footage_query": "IMAGE: Historic photo 1976 Lauda crash aftermath",
-  "image_motion": "slow_zoom_in",
-  "image_duration": 8,
-  "image_source": "Getty Images / Fair Use",
-  "motion_notes": "Start wide on the burning car, slowly zoom to focus on marshals responding"
-}
-```
-
-**Image Quality Requirements:**
-- Minimum resolution: 1920x1080 (HD) or 3840x2160 (4K)
-- Higher resolution allows more zoom range without quality loss
-- Horizontal images work best for 16:9 format
-- For vertical images, use pan movements instead of zoom
-
-**Sourcing Fair-Use Images:**
-- Wikimedia Commons (public domain, CC licenses)
-- Official F1/FIA press photos (editorial use)
-- Team official media galleries
-- Historical archives (with attribution)
-- Creative Commons licensed photos
-
-#### 4. Text Cards
-Use for:
-- Quotes (with attribution)
-- Key statistics
-- Date/location stamps
-- Chapter transitions
-
-```json
-{
-  "footage_type": "text_card",
-  "footage_query": "TEXT: Niki Lauda quote about fear",
-  "text_content": "\"Fear is stupid. So are regrets.\" — Niki Lauda",
-  "style": "quote_card"
-}
-```
-
-#### 5. Screen Recordings
-Use for:
-- Social media reactions
-- Telemetry data
-- Timing screens
-- Official statements/press releases
-
-### Footage Type Reference
-
-| Type | Use Case | footage_type | Motion Options | Example |
-|------|----------|--------------|----------------|---------|
-| Video | Race footage, interviews | `video` | N/A | Standard YouTube search |
-| Graphic | Charts, diagrams, animations | `graphic` | Animated | Technical explanations |
-| Image | Photos, stills with motion | `image` | `slow_zoom_in`, `slow_zoom_out`, `pan_left`, `pan_right`, `pan_up`, `pan_down`, `ken_burns_combo` | Historical moments |
-| Text Card | Quotes, stats, titles | `text_card` | `fade`, `slide_up` | Driver quotes |
-| Map | Circuit layouts, geography | `map` | `animated`, `highlight` | Incident reconstruction |
-| Screen | Telemetry, social media | `screen` | `scroll`, `zoom` | Data visualization |
-
-### Visual Pacing Guidelines
-
-Mix visual types to maintain viewer engagement:
-
-| Video Duration | Recommended Mix |
-|----------------|-----------------|
-| 0-2 min | 70% video, 20% images, 10% graphics |
-| 2-5 min | 60% video, 25% images, 15% graphics/text |
-| 5-10 min | 50% video, 30% images, 20% graphics/text |
-
-**Tips for Visual Variety:**
-- Never use the same visual type for more than 3 consecutive segments
-- Use graphics/text cards as "breathing room" between intense video sequences
-- Ken Burns images work well for reflective, emotional moments
-- Save video footage for action-heavy segments (races, overtakes, crashes)
-- Use text cards to emphasize key quotes or statistics
+Ken Burns: `zoom_in`, `zoom_out`, `pan_left`, `pan_right`, `zoom_pan_right` — auto-varied per segment.
 
 ---
 
 ## Workflow
 
-### Phase 1: Research & Script Creation
+### Phase 1: Topic Validation
 
-1. **Understand the Prompt**: Analyze what story/narrative the user wants
-   - Identify the main topic (driver profile, race analysis, history, etc.)
-   - Determine the emotional core: What should viewers FEEL?
-   - Find the unique angle: What's the fresh perspective?
-   - Plan the narrative arc: Beginning → Conflict → Resolution
+1. **Understand the Prompt**: Identify main topic, emotional core, unique angle, narrative arc
+2. **Validate Topic Depth**: Before writing a single word, answer these:
+   - Does this story have a protagonist, conflict, and resolution? (Not just "here are some facts about X")
+   - Can this genuinely fill 4-6 minutes without padding? If not, make it a Short instead.
+   - Does this relate to themes proven by Shorts analytics? (driver drama, untold stories, surprising facts)
+   - What's the "why should I keep watching?" through-line for every minute?
+3. If the topic fails validation, propose alternatives or suggest making it a Short instead.
 
-2. **Research**: Search web for facts, quotes, statistics, sources
-   - Use web search to gather accurate information
-   - **CRITICAL**: Record sources for every factual claim
-   - Look for lesser-known details that add depth
-   - Find direct quotes from drivers, team principals, journalists
-   - Verify statistics and dates from official sources
+### Phase 2: Research & Script Creation (with Self-Review Loop)
 
-3. **Create Script**: Generate `script.json` with comprehensive segments:
+4. **Research**: Search web for facts, quotes, statistics. **Record sources for every claim.**
+5. **Create Script**: Generate `script.json`:
    ```json
-   {
-     "title": "Video Title",
-     "format": "longform",
-     "resolution": "4k",
-     "duration_target": 600,
+   { "title": "Video Title", "format": "longform", "resolution": "4k", "duration_target": 300,
+     "tags": ["F1", "Formula 1", "Driver Name", "Team Name", "Topic Keywords", "...15+ tags"],
      "segments": [
-       {
-         "id": 1,
-         "section": "cold_open",
-         "text": "The hook that grabs attention immediately...",
-         "context": "Dramatic opening - the climactic moment",
-         "footage_type": "video",
-         "footage_query": "YouTube search terms",
-         "footage_start": 0,
-         "references": [
-           {
-             "claim": "The specific claim being made",
-             "source": "Source Name",
-             "url": "https://source-url.com/article",
-             "date": "2024-01-15"
-           }
-         ]
-       },
-       {
-         "id": 2,
-         "section": "intro",
-         "text": "Establishing context after the hook...",
-         "context": "Set up the story we're telling",
-         "footage_type": "graphic",
-         "footage_query": "GRAPHIC: Timeline of key events",
-         "graphic_description": "Animated timeline showing the major milestones"
+       { "id": 1, "section": "cold_open", "text": "The hook...", "context": "Dramatic opening",
+         "shots": [ ... ],
+         "references": [{ "claim": "Specific claim", "source": "Source Name", "url": "https://...", "date": "2024-01-15" }]
        }
      ],
-     "references_summary": [
-       {
-         "source": "F1 Official",
-         "url": "https://f1.com/...",
-         "claims_supported": [1, 3, 5]
-       }
-     ]
+     "references_summary": [{ "source": "F1 Official", "url": "https://f1.com/...", "claims_supported": [1, 3, 5] }]
    }
    ```
 
-4. **Fact Check Script**: Run fact checker on created script
+6. **SELF-REVIEW LOOP (up to 3 iterations)** — Before showing to user, validate script against these criteria:
+   - [ ] **HOOK TEST**: First 15 seconds would stop a scroll if posted as a Short
+   - [ ] **TENSION TEST**: Every 60 seconds has a question, conflict, or revelation
+   - [ ] **PADDING TEST**: Every segment moves the story forward (if not, cut it)
+   - [ ] **DURATION TEST**: Word count is 600-900 words (4-6 min at ~150 wpm)
+   - [ ] **SEGMENT TEST**: No segment exceeds 80 words / ~30 seconds
+   - [ ] **SHOT PACING TEST**: No single static image on screen for >6 seconds. If a segment has only 1 image shot and >15 words of narration, split into multiple shots (one per entity mentioned, or mix image + video)
+   - [ ] **VARIETY TEST**: Uses at least 3 section types (cold_open, rising_action, climax, etc.)
+   - [ ] **CTA TEST**: Final segment includes subscribe/follow CTA
+   - [ ] **TAG TEST**: `tags` array has 15+ specific tags (driver names, teams, topics)
+   - [ ] **REFERENCE TEST**: Every factual claim has a source
+   - [ ] **TITLE TEST**: Uses curiosity gap pattern, under 60 chars
+   If ANY check fails, rewrite the failing sections and re-check. Do NOT present to user until all pass.
+
+7. **Fact Check Script**:
    ```bash
    python3 src/fact_checker.py --project {name} --web-search
    ```
-   - Verify all claims have supporting sources
-   - Flag any disputed or unverified claims
-   - Do NOT proceed until all claims are verified or acknowledged
 
-### Phase 2: Script Review (MANDATORY CHECKPOINT)
+### Phase 3: Script Review (MANDATORY CHECKPOINT)
 
-5. **REVIEW CHECKPOINT - STOP AND WAIT FOR USER APPROVAL**
+8. **STOP AND WAIT FOR USER APPROVAL** — Present the complete script showing: title, duration, segment count, visual mix, cold open text, story structure, sources, AND the self-review checklist results. **DO NOT PROCEED** until user explicitly approves.
 
-   Present the complete script to the user:
+### Phase 4: Asset Generation
 
-   ---
-
-   **📺 VIDEO SCRIPT REVIEW**
-
-   **Title**: {title}
-   **Duration**: ~{duration_target/60} minutes
-   **Segments**: {number of segments}
-   **Visual Mix**: {X} video clips, {Y} graphics, {Z} text cards
-
-   ---
-
-   **🎬 COLD OPEN**
-   > {First segment text - the hook}
-
-   **📖 STORY STRUCTURE**
-
-   For each section, show:
-   - Section name and purpose
-   - Key narrative beats
-   - Visual approach (video/graphic/image)
-
-   **📚 SOURCES** ({count} references)
-   List primary sources being cited.
-
-   ---
-
-   **Ask the user:**
-   "Please review this script. I can:
-   1. ✅ Proceed with video creation
-   2. ✏️ Revise specific sections
-   3. 🔍 Add more depth to a topic
-   4. 🎯 Adjust the angle/focus
-   5. 🔄 Start fresh with a different approach"
-
-   **DO NOT PROCEED** until user explicitly approves.
-
-### Phase 3: Asset Generation
-
-6. **Generate Audio**: Use ElevenLabs API
+9. **Generate Audio**:
    ```bash
    python3 src/audio_generator.py --project {name}
    ```
 
-7. **Download Footage & Images**: Download all footage and images required by the script's shot lists.
-   The multi-shot assembler expects pre-downloaded footage in `footage/` — it does NOT download on-the-fly.
-   **This step is REQUIRED when the script uses `shots` arrays with `source_type: "youtube_clip"` or `"image"`.**
-
-   ```bash
-   # Download all shots (YouTube clips + stock images)
-   python3 src/footage_downloader.py --project {name}
-
-   # With Google-powered search for better accuracy (slower)
-   python3 src/footage_downloader.py --project {name} --google-search
-
-   # With Gemini vision validation (slowest, most accurate)
-   python3 src/footage_downloader.py --project {name} --google-search --validate
-
-   # Check download status
-   python3 src/footage_downloader.py --project {name} --list
-   ```
-
-   After downloading, verify all shots are present with `--list`. Re-download any failed shots with:
-   ```bash
-   python3 src/footage_downloader.py --project {name} --segment N --shot M --query "alternative search terms"
-   ```
-
-8. **Assemble Video**:
-   The assembler uses downloaded footage for multi-shot segments, with stock images as fallback:
-   - Multi-shot segments: Uses YouTube clips and images from `footage/` with transitions
-   - Fallback (if footage missing): Fetches stock images from Pexels/Unsplash with Ken Burns effects
-   - Detects quotes and creates quote overlays with speaker images
-   - Applies color grading, transition SFX, and animated intro
-
-   ```bash
-   # Assemble video (4K default)
-   python3 src/image_video_assembler.py --project {name}
-
-   # Options:
-   python3 src/image_video_assembler.py --project {name} --resolution hd  # Faster, 1080p
-   python3 src/image_video_assembler.py --project {name} --no-music       # Skip background music
-   python3 src/image_video_assembler.py --project {name} --analyze        # Preview visual routing (dry run)
-   ```
-
-   **Note**: Requires Pexels API key in `shared/creds/pexels` for fallback images (free tier available)
-
-9. **Quality Check**:
-    - Video/audio sync throughout
-    - Downloaded footage matches narration content
-    - Transitions between shots are smooth
-    - Quote overlays display correctly
-    - Pacing feels right
-    - End credits display properly
-
-### Phase 4: Post-Assembly Validation (NEVER SKIP)
-
-**This step is MANDATORY after every assembly, BEFORE delivering the video.** A successful assembler exit code does NOT mean the video is correct.
-
-1. **Duration sanity check**: Compare `final.mp4` total duration against expected duration (sum of audio durations + transitions). They should be within 5%.
-   ```bash
-   ffprobe -v error -show_entries format=duration -of csv=p=0 projects/{name}/output/final.mp4
-   ```
-
-2. **First segment check**: Extract the first 15-30s of the final video audio and verify the opening voiceover plays completely without cutting off. The cold open is critical — if it's broken, the whole video feels broken.
-
-3. **Segment-by-segment duration check**: Compare each segment's video clip duration against its audio file duration. Flag any segment where video is <80% of audio — that means footage is too short and audio will be cut off or video will freeze.
-
-4. **`footage_start` consistency check**: The `footage_start` field exists at BOTH the top-level segment AND inside each `shots[]` entry. The assembler uses the top-level value for single-shot segments. When replacing footage files (especially with pre-trimmed clips), update BOTH levels or the video duration will be wrong (e.g., 5s video for 25s audio = cut-off voiceover).
-
-5. **PNG-as-JPG detection**: Reddit and Google Images sometimes serve PNG files despite `.jpg` URLs. This causes FFmpeg's zoompan filter to hang for minutes per image (vs <1s for actual JPEG). Always detect and convert:
-   ```bash
-   file footage/*.jpg 2>/dev/null | grep PNG
-   # Convert any PNG-as-JPG: ffmpeg -y -i input.png -q:v 2 output.jpg
-   ```
-
-6. **Fix any issues BEFORE delivery**: If any check fails, fix the root cause and re-assemble:
-   ```bash
-   rm -f projects/{name}/output/final.mp4 projects/{name}/output/segment_*.mp4
-   python3 src/image_video_assembler.py --project {name}
-   ```
-
-### Phase 5: Upload (Optional)
-
-9. **Upload to YouTube**:
+10. **Download Footage & Images** (REQUIRED for multi-shot scripts):
     ```bash
-    python3 src/youtube_uploader_longform.py --project {name} --dry-run  # Preview
-    python3 src/youtube_uploader_longform.py --project {name}            # Upload
+    python3 src/footage_downloader.py --project {name} --google-search --validate
+    python3 src/footage_downloader.py --project {name} --list  # Check status
+    python3 src/footage_downloader.py --project {name} --segment N --shot M --query "alt search"  # Re-download
     ```
 
----
+11. **Assemble Video**:
+    ```bash
+    python3 src/image_video_assembler.py --project {name}
+    python3 src/image_video_assembler.py --project {name} --resolution hd   # Faster 1080p
+    python3 src/image_video_assembler.py --project {name} --no-music        # Skip music
+    python3 src/image_video_assembler.py --project {name} --analyze         # Dry run
+    ```
 
-## Segment Guidelines
+    **Topic cards & lower thirds — narrative vs news:**
+    - **Narrative/story-driven videos** (predictions, explainers, deep dives): Use `--no-topic-cards --no-lower-thirds`. The `context` field contains internal script notes ("dramatic hook", "quick elimination") that are meaningless to viewers. Narrative videos flow continuously and don't need chapter breaks.
+    - **News/multi-story videos** (daily news, weekly roundups): Keep topic cards and lower thirds ON. Each segment covers a distinct story, and context fields should be actual headlines.
+    - If a narrative video genuinely needs chapter labels, add an explicit `topic_label` field per segment instead of reusing internal `context` notes.
 
-### Text Length & Pacing
+    **Intro**: Uses `shared/assets/logo/logo2.mp4` (F1 car burnout + logo reveal), sped up to match voiceover duration, placed AFTER the cold_open segment so the hook plays first.
 
-| Segment Type | Words | Duration | Sentences |
-|--------------|-------|----------|-----------|
-| Hook/Punch | 25-40 | 10-15s | 2-3 short |
-| Standard | 50-70 | 20-25s | 3-5 mixed |
-| Reflective | 60-80 | 25-30s | 3-4 flowing |
-| Technical | 40-60 | 15-20s | 2-4 clear |
+    **Footage quality rules:**
+    - Use `source_type: image` for buildings, facilities, headquarters — YouTube clips for these return irrelevant results (tunnels, promos with burned-in text)
+    - Portraits: verify orientation/crop, use `ken_burns: zoom_out` on tight portraits (zoom_in = over-zoom)
+    - Reject YouTube clips with burned-in text overlays from documentaries/promos
 
-### Sentence Variety
+### Phase 5: Post-Assembly Validation (NEVER SKIP)
 
-Mix these patterns:
-- **Punchy**: "He won. Again." (2-4 words)
-- **Standard**: "The championship battle continued into the final race." (8-12 words)
-- **Flowing**: "As the lights went out in Abu Dhabi, both drivers knew that everything they had worked for across twenty-one grueling races came down to this single moment." (25+ words)
+12. **Validate before delivery** (see f1-footage-sourcing skill for detailed checks):
+    ```bash
+    ffprobe -v error -show_entries format=duration -of csv=p=0 projects/{name}/output/final.mp4
+    ```
+    - **Duration HARD CHECK**: Must be 4-6 minutes. If outside this range, investigate why and fix.
+    - First segment check (hook voiceover plays completely)
+    - Segment-by-segment duration check (video ≥ 80% of audio for each)
+    - **Static image hold check**: No single image on screen >6s. For each segment, estimate narration duration from word count (~150 wpm) and verify enough shots exist. Flag any segment with 1 image shot and >15 words.
+    - **Failed shot check**: Grep assembler output for "Shot N failed" or "skipping". Failed shots cause remaining shots to stretch and freeze. Re-download failed shots and reassemble — do NOT deliver with failed shots.
+    - `footage_start` consistency (top-level matches shots[])
+    - PNG-as-JPG detection: `file footage/*.jpg 2>/dev/null | grep PNG`
+    - Fix any issues and re-assemble before delivery
 
-### Transition Phrases
+### Phase 6: Upload
 
-**Avoid overusing:**
-- "Now let's talk about..."
-- "Moving on to..."
-- "Next, we'll look at..."
+13. **Upload to YouTube**:
+    ```bash
+    python3 src/youtube_uploader_longform.py --project {name} --dry-run  # Preview — verify tags are present!
+    python3 src/youtube_uploader_longform.py --project {name}            # Upload
+    ```
+    **CRITICAL**: Verify the dry-run shows 15+ tags. Previous long-form uploads had ZERO tags which killed discoverability.
 
-**Use instead:**
-- Scene shifts: "Three thousand miles away..." / "Meanwhile, in Maranello..."
-- Time jumps: "Fast forward to 2019." / "Rewind to his first race."
-- Contrast: "But the data told a different story." / "Yet something felt wrong."
-- Consequence: "The implications were immediate." / "What followed changed everything."
-
----
-
-## Reference Requirements
-
-**Every factual claim must have a source:**
-- Driver statistics → F1 official records
-- Historical events → Contemporary news reports
-- Quotes → Direct source with date
-- Technical details → Official team/F1 communications
-
-**References format in script.json:**
-```json
-{
-  "references": [
-    {
-      "claim": "Hamilton has 104 race wins",
-      "source": "Formula 1 Official Statistics",
-      "url": "https://www.formula1.com/en/results.html",
-      "date": "2024-12-01"
-    }
-  ]
-}
-```
-
----
-
-## Commands Reference
-
-```bash
-# Fact-check with web search
-python3 src/fact_checker.py --project {name} --web-search
-
-# Validate references coverage
-python3 src/fact_checker.py --project {name} --validate-refs
-
-# Generate audio (cached)
-python3 src/audio_generator.py --project {name}
-
-# Download footage (REQUIRED before assembly for multi-shot scripts)
-python3 src/footage_downloader.py --project {name}
-python3 src/footage_downloader.py --project {name} --google-search --validate  # Better accuracy
-
-# Assemble video (uses downloaded footage from multi-shot scripts)
-python3 src/image_video_assembler.py --project {name}
-
-# Assemble in HD (faster, smaller file)
-python3 src/image_video_assembler.py --project {name} --resolution hd
-
-# Force specific Ken Burns effect
-python3 src/image_video_assembler.py --project {name} --effect zoom_in
-
-# Skip background music
-python3 src/image_video_assembler.py --project {name} --no-music
-
-# Preview upload metadata
-python3 src/youtube_uploader_longform.py --project {name} --dry-run
-
-# Upload to YouTube
-python3 src/youtube_uploader_longform.py --project {name}
-```
-
-### Alternative: Footage-Based Assembly
-
-```bash
-# Download YouTube footage (required before assembly when using multi-shot scripts)
-python3 src/footage_downloader.py --project {name}
-python3 src/footage_downloader.py --project {name} --google-search --validate  # Better accuracy
-
-# Footage-based assembly (legacy single-shot approach)
-python3 src/video_assembler_longform.py --project {name}
-```
+    **Thumbnail**: For multi-brand topics (team predictions, manufacturer comparisons), use the hybrid logo composite approach described in `/f1-upload-video` instead of `thumbnail_generator.py`. AI generators cannot render real logos — use Imagen for backgrounds only, overlay real transparent PNG logos with FFmpeg.
 
 ---
 
 ## Output
 
 Final video: `projects/{name}/output/final.mp4`
-- Format: 3840x2160 (4K) or 1920x1080 (HD), 16:9 horizontal
-- Duration: ~10 minutes + 19s outro (as specified)
-- Framerate: 30fps
+- Format: 3840x2160 (4K) or 1920x1080 (HD), 16:9 horizontal, 30fps
 - Bitrate: 20Mbps (4K) / 12Mbps (HD)
-- Audio: Voiceover + subtle ambient/motorsport background music (5% volume or less)
-- **No burned-in captions**: Generate separate `.srt` or `.vtt` file for YouTube CC upload
-- **Outro**: Reusable 19-second outro with voiceover (like/subscribe CTA) + 5-sec credits overlay
-
-### Outro Audio (Reusable)
-The outro audio is pre-generated and stored at `shared/audio/outro_longform.mp3` (~19 seconds).
-This saves ElevenLabs credits and ensures consistent branding across all videos.
-
-**Outro sequence:**
-1. **0-5 seconds**: "Sources & References in Description" text overlay
-2. **5-19 seconds**: Channel branding (F1 BURNOUTS) + CTA text while outro voiceover plays
-
-**Outro voiceover content** (DO NOT regenerate - reuse the existing file):
-> "If you enjoyed this pit stop through F1 history, smash that like button harder than a late braking move into turn one. Subscribe and hit the bell—because unlike a safety car restart, you don't want to miss what's coming next. Until then, keep the rubber on the track and the passion in your heart. F1 Burnouts, out."
-
-### Subtitle/CC File Generation
-For long-form videos, do NOT burn subtitles into the video. Instead:
-1. Generate a separate `captions.srt` file in the output folder
-2. Upload this file to YouTube as closed captions
-3. This allows viewers to toggle captions on/off
-
-### Background Music Guidelines
-- Volume: 5% or lower (barely audible, just fills silence)
-- Style: Ambient, cinematic, or motorsport-themed instrumental
-- No vocals or prominent melodies that compete with narration
-- Consider using no music for technical/serious segments
-- Music file: `shared/music/background_longform.mp3` (if available)
-
----
-
-## Quality Checklist
-
-### Before presenting script to user:
-- [ ] Hook grabs attention in first 10 seconds
-- [ ] Clear narrative arc with tension/conflict
-- [ ] No repeated information across segments
-- [ ] Varied sentence lengths and structures
-- [ ] All facts have referenced sources
-- [ ] Visual variety (mix of footage types)
-- [ ] "So what?" test passed for each segment
-- [ ] Satisfying conclusion that ties back to opening
-
-### Before downloading footage:
-- [ ] Search queries specify "b-roll", "no commentary", or "footage"
-- [ ] Queries avoid terms like "interview", "explained", "reaction"
-- [ ] Queries include "16:9" or "horizontal" where needed
-- [ ] Alternative queries ready for segments where stock footage may fail
-
-### Before final assembly:
-- [ ] All footage is 16:9 horizontal (no vertical videos)
-- [ ] No footage contains talking heads or direct-to-camera speech
-- [ ] No footage has heavy text overlays or subtitles
-- [ ] Footage content matches the voiceover topic
-- [ ] Preview frames verified for each segment
-- [ ] End credits duration matches content (no blank time after)
-- [ ] Background music volume is 5% or lower
-- [ ] Separate .srt caption file generated
-
----
-
-## API Keys Location
-- ElevenLabs: `shared/creds/elevenlabs`
-- YouTube: `shared/creds/youtube_client_secrets.json`
-- Pexels (stock images): `shared/creds/pexels` - Get free key at https://www.pexels.com/api/
-- Unsplash (fallback images): `shared/creds/unsplash` - Get free key at https://unsplash.com/developers
-- OpenAI (for DALL-E graphics): `shared/creds/openai` - Optional, for AI-generated diagrams
-- SerpAPI (for fact-checking): `SERPAPI_KEY` environment variable
-
-## Voice Settings
-- Voice: Jarnathan - Confident and Versatile
-- Voice ID: c6SfcYrb2t09NHXiT80T
-- Model: eleven_multilingual_v2
-- Best for: Long-form documentary narration, authoritative delivery
-
----
-
-## Long-Form Video Features
-
-- **Stock Image Approach**: Uses Pexels/Unsplash photos instead of YouTube footage
-- **Ken Burns Effects**: zoom_in, zoom_out, pan_left, pan_right for engaging motion
-- **Quote Overlays**: Auto-detects quotes and displays with speaker images
-- **4K/HD Resolution**: 3840x2160 or 1920x1080, 16:9 horizontal
-- **Higher Bitrate**: 20Mbps (4K) or 12Mbps (HD) for quality
-- **End Credits**: Auto-generated with sources/references
-- **Image Attributions**: Auto-generated file with stock photo credits
-- **No Text Overlay**: Clean footage with separate SRT for YouTube captions
-- **Reference Tracking**: Every factual claim should have a source
-- **YouTube Chapters**: Generated from section names
-- **Description with Sources**: All references included in upload
+- Audio: Voiceover + subtle background music (5% volume or less)
+- **No burned-in captions** — generate separate `.srt` for YouTube CC
+- **Outro**: Reusable 19s outro at `shared/audio/outro_longform.mp3` (DO NOT regenerate)
 
 ---
 
 ## Animated Video (Remotion)
 
-For technical explainers and data-heavy content, use Remotion for programmatic React animations synced to voiceover.
+For technical explainers, use Remotion for programmatic React animations synced to voiceover.
 
-### Setup
 ```bash
-# Clone shared template into project
 cp -r shared/remotion-template projects/{name}/video
 cd projects/{name}/video && npm install
-```
-
-### Workflow
-```bash
-# Concatenate audio chunks for Remotion
+# Concatenate audio for Remotion
 ffmpeg -f concat -safe 0 -i <(for f in ../audio/chunk_*.mp3; do echo "file '$(cd .. && pwd)/audio/$(basename $f)'"; done) -c:a libmp3lame -b:a 256k public/audio.mp3
-
-# Preview in browser (Remotion Studio)
-npm run dev
-
-# Quick preview render (first 3 seconds)
-npm run preview
-
-# Full HD render (1920x1080, ~15min for 17min video)
-npm run render
-
-# Background render (won't block terminal)
-nohup npx remotion render F1Video --output output/final.mp4 --codec h264 --concurrency 4 > /tmp/render.log 2>&1 &
-tail -f /tmp/render.log
-
-# 4K render
-npm run build:4k
+npm run dev       # Preview in browser
+npm run preview   # Quick 3s render
+npm run render    # Full HD render
+npm run build:4k  # 4K render
 ```
 
-### Key Files to Customize
-- `src/data/segments.ts` — Segment timing from VTT transcript, animation type mapping
-- `src/components/SegmentRenderer.tsx` — Animation router (which component for which segment)
-- `src/animations/*.tsx` — Animation components (15+ reusable, or create new ones)
-
-### Project Structure
-```
-projects/{name}/
-├── script.json
-├── audio/           # Generated voiceovers (chunk_000.mp3, ...)
-├── output/
-│   ├── transcript.vtt  # VTT timestamps (used for segment timing)
-│   └── final.mp3       # Podcast output (if dual-format)
-└── video/           # Remotion project (cloned from shared/remotion-template)
-    ├── public/
-    │   └── audio.mp3   # Concatenated audio for video
-    ├── src/
-    │   ├── data/segments.ts
-    │   ├── components/
-    │   └── animations/
-    └── output/
-        └── final.mp4
-```
-
-See `shared/remotion-template/REMOTION_GUIDE.md` for full documentation.
+Key files: `src/data/segments.ts` (timing from VTT), `src/components/SegmentRenderer.tsx` (animation router), `src/animations/*.tsx` (reusable components). See `shared/remotion-template/REMOTION_GUIDE.md` for full docs.
 
 ---
 
-## Next Step
-After the video is created, suggest the user run `/f1-upload-video` to upload to YouTube.
+## Voice & API Keys
+- Voice: Jarnathan (c6SfcYrb2t09NHXiT80T), eleven_multilingual_v2
+- ElevenLabs: `shared/creds/elevenlabs` | YouTube: `shared/creds/youtube_client_secrets.json`
+- Pexels: `shared/creds/pexels` | OpenAI: `shared/creds/openai` | SerpAPI: `SERPAPI_KEY` env var
+
+### Next Step
+After video is created, suggest `/f1-upload-video` to upload to YouTube.

@@ -9,6 +9,14 @@ Features:
 - Uses F1 brand colors for visual impact
 - Creates high-contrast, attention-grabbing thumbnails
 - Optimized for YouTube (1280x720, 16:9)
+
+NOTE: For multi-brand/manufacturer topics (e.g., "12th team predictions"),
+this auto-generator is NOT suitable. AI image generators cannot render real
+logos accurately. Instead, use the hybrid approach:
+  1. Generate cinematic background with Imagen (no text/logos in prompt)
+  2. Download transparent PNG logos (verify pix_fmt=rgba, never use JPGs)
+  3. Composite with FFmpeg: bg -> dark overlay -> text -> logos on top
+See /f1-upload-video command for full instructions.
 """
 import os
 import sys

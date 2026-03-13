@@ -25,6 +25,7 @@ from typing import Dict, List, Optional, Tuple
 # Minimum shot duration (seconds) - prevents jarring micro-cuts
 MIN_SHOT_DURATION = 1.5  # For shorts (fast-paced)
 MIN_SHOT_DURATION_LONGFORM = 2.0  # For long-form (slower pacing)
+MAX_STATIC_IMAGE_DURATION = 6.0  # Warn if a single image shot exceeds this
 
 # Ken Burns effects for image shots
 KEN_BURNS_EFFECTS = ["zoom_in", "zoom_out", "pan_left", "pan_right"]
@@ -238,7 +239,23 @@ def calculate_shot_timings(
 
         filled.append((actual_start, actual_end))
 
-    return _clamp_timings(filled, audio_duration, min_duration)
+    final_timings = _clamp_timings(filled, audio_duration, min_duration)
+
+    # Warn about static image shots that exceed MAX_STATIC_IMAGE_DURATION
+    for i, (start, end) in enumerate(final_timings):
+        duration = end - start
+        if duration > MAX_STATIC_IMAGE_DURATION and i < len(shots):
+            shot = shots[i]
+            source_type = shot.get("source_type", "")
+            if source_type == "image":
+                label = shot.get("label", f"shot {i}")
+                print(
+                    f"    ⚠️  WARNING: Image shot '{label}' holds for {duration:.1f}s "
+                    f"(>{MAX_STATIC_IMAGE_DURATION}s limit). "
+                    f"Split into multiple shots to avoid static freeze."
+                )
+
+    return final_timings
 
 
 def _clamp_timings(

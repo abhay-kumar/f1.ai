@@ -38,7 +38,7 @@ from typing import Dict, List, Optional, Tuple
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.color_grader import apply_color_grade, detect_color_grade
 from src.config import (
-    BACKGROUND_MUSIC,
+    BACKGROUND_MUSIC_LONGFORM,
     BASE_DIR,
     CREDITS_DURATION_LONGFORM,
     F1_DEFAULT_COLOR,
@@ -178,7 +178,9 @@ def get_lower_third_title(segment: Dict) -> Optional[str]:
     raw = segment.get("context", "")
     if not raw:
         return None
-    return raw.upper()[:45]
+    # Truncate before any em-dash detail to keep cards short
+    short = raw.split("—")[0].split(" - ")[0].strip()
+    return short.upper()[:30]
 
 
 def render_remotion_overlay(
@@ -2107,7 +2109,7 @@ def add_background_music(
         music_volume: Base volume (used if no segment_volumes)
         segment_volumes: List of (start_time, end_time, volume) for per-segment volume
     """
-    if not os.path.exists(BACKGROUND_MUSIC):
+    if not os.path.exists(BACKGROUND_MUSIC_LONGFORM):
         subprocess.run(["cp", video_path, output_path])
         return True
 
@@ -2145,7 +2147,7 @@ def add_background_music(
         "-i",
         video_path,
         "-i",
-        BACKGROUND_MUSIC,
+        BACKGROUND_MUSIC_LONGFORM,
         "-filter_complex",
         filter_complex,
         "-map",
@@ -2165,13 +2167,66 @@ def add_background_music(
     return os.path.exists(output_path)
 
 
-def generate_srt_captions(script: Dict, audio_dir: str, output_path: str) -> bool:
-    """Generate SRT caption file."""
+def _split_text_into_caption_chunks(text: str, max_words: int = 14) -> list:
+    """Split text into short caption chunks at natural sentence boundaries.
+
+    Tries to break at sentence boundaries (periods, question marks, exclamation marks)
+    first, then splits long sentences into chunks of max_words.
+    """
+    import re
+
+    # Split into sentences first
+    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+    chunks = []
+
+    for sentence in sentences:
+        words = sentence.split()
+        if len(words) <= max_words:
+            chunks.append(sentence)
+        else:
+            # Split long sentence into chunks at natural break points
+            # Prefer splitting at commas, dashes, conjunctions
+            current_chunk = []
+            for word in words:
+                current_chunk.append(word)
+                if len(current_chunk) >= max_words:
+                    chunks.append(" ".join(current_chunk))
+                    current_chunk = []
+                elif len(current_chunk) >= max_words - 3 and word.endswith((",", ";", "\u2014")):
+                    chunks.append(" ".join(current_chunk))
+                    current_chunk = []
+            if current_chunk:
+                chunks.append(" ".join(current_chunk))
+
+    return chunks
+
+
+def generate_srt_captions(script: Dict, audio_dir: str, output_path: str,
+                          intro_duration: float = 0.0) -> bool:
+    """Generate SRT caption file with short, readable caption chunks.
+
+    Each caption shows ~8-14 words for 2-4 seconds, matching YouTube best practices.
+    The intro_duration parameter accounts for the logo intro inserted after cold_open
+    segments in the final video, so captions stay in sync with the assembled video.
+    """
     segments = script.get("segments", [])
     srt_content = []
     current_time = 0.0
+    caption_index = 1
+    intro_offset_applied = False
+
+    def fmt(s):
+        h, m = int(s // 3600), int((s % 3600) // 60)
+        return f"{h:02d}:{m:02d}:{s % 60:06.3f}".replace(".", ",")
 
     for i, segment in enumerate(segments):
+        # Insert intro offset after cold_open segments (intro plays between
+        # cold_open and the first non-cold_open segment in the assembled video)
+        if (not intro_offset_applied and intro_duration > 0
+                and segment.get("section", "").lower() != "cold_open"):
+            current_time += intro_duration
+            intro_offset_applied = True
+
         audio_file = f"{audio_dir}/segment_{i:02d}.mp3"
         duration = (
             get_duration(audio_file)
@@ -2179,17 +2234,28 @@ def generate_srt_captions(script: Dict, audio_dir: str, output_path: str) -> boo
             else len(segment["text"].split()) / 2.5
         )
 
-        start_time = current_time
-        end_time = current_time + duration
+        # Split segment text into short caption chunks
+        chunks = _split_text_into_caption_chunks(segment["text"])
+        if not chunks:
+            current_time += duration
+            continue
 
-        def fmt(s):
-            h, m = int(s // 3600), int((s % 3600) // 60)
-            return f"{h:02d}:{m:02d}:{s % 60:06.3f}".replace(".", ",")
+        # Distribute time proportionally by word count
+        total_words = sum(len(c.split()) for c in chunks)
+        chunk_start = current_time
 
-        srt_content.extend(
-            [str(i + 1), f"{fmt(start_time)} --> {fmt(end_time)}", segment["text"], ""]
-        )
-        current_time = end_time
+        for chunk in chunks:
+            chunk_words = len(chunk.split())
+            chunk_duration = duration * (chunk_words / total_words) if total_words > 0 else duration / len(chunks)
+            chunk_end = chunk_start + chunk_duration
+
+            srt_content.extend(
+                [str(caption_index), f"{fmt(chunk_start)} --> {fmt(chunk_end)}", chunk, ""]
+            )
+            caption_index += 1
+            chunk_start = chunk_end
+
+        current_time += duration
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write("\n".join(srt_content))
@@ -2407,16 +2473,32 @@ def main():
         print("\nNo segments created!")
         sys.exit(1)
 
-    # Prepend intro
+    # Insert intro AFTER the cold open segment (position 1) so the hook plays first,
+    # then the branded intro ("You are watching F1 Burnouts") plays before the body.
+    # Falls back to position 0 if no cold_open section exists.
     if intro_path and os.path.exists(intro_path):
-        segment_videos.insert(0, intro_path)
+        cold_open_count = sum(
+            1 for s in segments[:len(segment_videos)]
+            if s.get("section", "").lower() == "cold_open"
+        )
+        insert_pos = min(cold_open_count, len(segment_videos)) if cold_open_count > 0 else 0
+        segment_videos.insert(insert_pos, intro_path)
 
-    # Outro
-    if not args.no_credits:
+    # Outro — only append credits outro if no segment already has a CTA/outro section.
+    # Scripts with a CTA segment already get a Remotion-rendered outro, so appending
+    # create_outro_video() on top would produce a double outro.
+    has_cta_segment = any(
+        seg.get("section", "").lower() in ("outro", "cta")
+        or "cta" in seg.get("context", "").lower()
+        for seg in segments
+    )
+    if not args.no_credits and not has_cta_segment:
         print("\nCreating outro...")
         outro_path = f"{temp_dir}/outro.mp4"
         if create_outro_video(outro_path, width, height):
             segment_videos.append(outro_path)
+    elif has_cta_segment:
+        print("\nSkipping credits outro (CTA segment already provides outro)")
 
     # Insert topic transition cards between news stories
     if not args.no_topic_cards:
@@ -2440,11 +2522,45 @@ def main():
         if cards_inserted:
             print(f"\nInserted {cards_inserted} topic transition cards")
 
-    # Concatenate
+    # Concatenate — normalize audio sample rates first to avoid concat demuxer errors
     print(f"\nConcatenating {len(segment_videos)} segments...")
+
+    # Detect dominant audio sample rate across segments
+    sample_rates = {}
+    for v in segment_videos:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a",
+             "-show_entries", "stream=sample_rate", "-of", "csv=p=0", v],
+            capture_output=True, text=True,
+        )
+        sr = result.stdout.strip()
+        if sr:
+            sample_rates[sr] = sample_rates.get(sr, 0) + 1
+    target_sr = max(sample_rates, key=sample_rates.get) if sample_rates else "24000"
+
+    # Re-encode any files with mismatched sample rates
+    normalized_videos = []
+    for v in segment_videos:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a",
+             "-show_entries", "stream=sample_rate", "-of", "csv=p=0", v],
+            capture_output=True, text=True,
+        )
+        sr = result.stdout.strip()
+        if sr and sr != target_sr:
+            fixed = v.replace(".mp4", "_arnorm.mp4")
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", v, "-c:v", "copy",
+                 "-c:a", "aac", "-ar", target_sr, "-ac", "1", fixed],
+                capture_output=True, text=True,
+            )
+            normalized_videos.append(fixed)
+        else:
+            normalized_videos.append(v)
+
     concat_file = f"{temp_dir}/concat.txt"
     with open(concat_file, "w") as f:
-        for v in segment_videos:
+        for v in normalized_videos:
             f.write(f"file '{v}'\n")
 
     concat_output = f"{temp_dir}/concat.mp4"
@@ -2461,7 +2577,7 @@ def main():
         "-c:a",
         "aac",
         "-ar",
-        "44100",
+        target_sr,
         "-ac",
         "1",
         "-b:a",
@@ -2511,8 +2627,10 @@ def main():
     else:
         subprocess.run(["cp", concat_output, final_output])
 
-    # Captions
-    generate_srt_captions(script, audio_dir, f"{output_dir}/captions.srt")
+    # Captions — pass intro duration so timestamps account for the logo intro
+    caption_intro_dur = get_duration(intro_path) if (intro_path and os.path.exists(intro_path)) else 0.0
+    generate_srt_captions(script, audio_dir, f"{output_dir}/captions.srt",
+                          intro_duration=caption_intro_dur)
 
     if os.path.exists(final_output):
         size_mb = os.path.getsize(final_output) / (1024 * 1024)
