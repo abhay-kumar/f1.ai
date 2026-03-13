@@ -3,20 +3,21 @@
 YouTube Uploader - Uploads shorts to YouTube with auto-generated metadata
 Uses YouTube Data API v3 with OAuth 2.0
 """
-import os
-import sys
-import json
+
 import argparse
+import json
+import os
 import pickle
+import sys
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from src.config import get_project_dir, SHARED_DIR
+from src.config import SHARED_DIR, get_project_dir
 
 # YouTube API imports
 try:
-    from google_auth_oauthlib.flow import InstalledAppFlow
     from google.auth.transport.requests import Request
+    from google_auth_oauthlib.flow import InstalledAppFlow
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaFileUpload
 except ImportError:
@@ -67,10 +68,14 @@ def get_authenticated_service():
                 print("1. Go to https://console.cloud.google.com/")
                 print("2. Create a project and enable YouTube Data API v3")
                 print("3. Create OAuth 2.0 credentials (Desktop app)")
-                print("4. Download and save as: shared/creds/youtube_client_secrets.json")
+                print(
+                    "4. Download and save as: shared/creds/youtube_client_secrets.json"
+                )
                 return None
 
-            flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS_FILE, SCOPES)
+            flow = InstalledAppFlow.from_client_secrets_file(
+                CLIENT_SECRETS_FILE, SCOPES
+            )
             credentials = flow.run_local_server(port=0)
 
         # Save credentials
@@ -99,30 +104,81 @@ def generate_metadata_from_script(script):
         "",
         F1_FAN_DISCLAIMER,
         "",
-        "Created with F1.ai"
+        "Created with F1.ai",
     ]
     description = "\n".join(description_lines)
 
     # Extract tags from content (drivers, teams mentioned)
-    tags = ["F1", "Formula1", "Shorts", "Formula 1", "Racing"]
+    tags = ["F1", "Formula1", "Shorts", "Formula 1", "Racing", "Motorsport", "Grand Prix"]
+
+    # Also include any tags from script.json itself
+    script_tags = script.get("tags", [])
+    tags.extend(script_tags)
 
     # Add driver/team tags based on mentions
     driver_tags = {
-        "vettel": ["Vettel", "Sebastian Vettel"],
-        "webber": ["Webber", "Mark Webber"],
-        "norris": ["Norris", "Lando Norris"],
-        "piastri": ["Piastri", "Oscar Piastri"],
-        "verstappen": ["Verstappen", "Max Verstappen"],
+        "verstappen": ["Verstappen", "Max Verstappen", "Red Bull"],
         "hamilton": ["Hamilton", "Lewis Hamilton"],
-        "leclerc": ["Leclerc", "Charles Leclerc"],
-        "alonso": ["Alonso", "Fernando Alonso"],
+        "leclerc": ["Leclerc", "Charles Leclerc", "Ferrari"],
+        "norris": ["Norris", "Lando Norris", "McLaren"],
+        "sainz": ["Sainz", "Carlos Sainz"],
+        "alonso": ["Alonso", "Fernando Alonso", "Aston Martin"],
+        "piastri": ["Piastri", "Oscar Piastri"],
+        "russell": ["Russell", "George Russell"],
+        "vettel": ["Vettel", "Sebastian Vettel"],
+        "schumacher": ["Schumacher", "Michael Schumacher"],
+        "senna": ["Senna", "Ayrton Senna"],
+        "prost": ["Prost", "Alain Prost"],
+        "webber": ["Webber", "Mark Webber"],
+        "ricciardo": ["Ricciardo", "Daniel Ricciardo"],
+        "raikkonen": ["Raikkonen", "Kimi Raikkonen"],
+        "bottas": ["Bottas", "Valtteri Bottas"],
+        "perez": ["Perez", "Sergio Perez"],
+        "ocon": ["Ocon", "Esteban Ocon"],
+        "hulkenberg": ["Hulkenberg", "Nico Hulkenberg"],
+        "antonelli": ["Antonelli", "Kimi Antonelli"],
+        "hadjar": ["Hadjar", "Isack Hadjar"],
+        "newey": ["Adrian Newey", "Newey"],
+        "horner": ["Christian Horner", "Horner"],
+        "toto": ["Toto Wolff", "Wolff"],
+        "vasseur": ["Fred Vasseur", "Vasseur"],
+        "lauda": ["Lauda", "Niki Lauda"],
+        "brabham": ["Brabham", "Jack Brabham"],
+        "andretti": ["Andretti", "Mario Andretti"],
+        "maylander": ["Maylander", "Bernd Maylander", "Safety Car"],
     }
 
     team_tags = {
-        "red bull": ["Red Bull", "Red Bull Racing"],
-        "mclaren": ["McLaren", "McLaren F1"],
+        "red bull": ["Red Bull", "Red Bull Racing", "Red Bull F1"],
+        "mclaren": ["McLaren", "McLaren F1 Team"],
         "ferrari": ["Ferrari", "Scuderia Ferrari"],
         "mercedes": ["Mercedes", "Mercedes AMG"],
+        "aston martin": ["Aston Martin", "Aston Martin F1"],
+        "williams": ["Williams", "Williams Racing"],
+        "alpine": ["Alpine", "Alpine F1"],
+        "haas": ["Haas", "Haas F1"],
+        "cadillac": ["Cadillac", "Cadillac F1"],
+        "audi": ["Audi", "Audi F1"],
+        "racing bulls": ["Racing Bulls"],
+    }
+
+    # Topic tags
+    topic_tags = {
+        "champion": ["World Championship", "F1 Champion"],
+        "race win": ["Race Winner", "Victory"],
+        "pole position": ["Pole Position", "Qualifying"],
+        "rivalry": ["F1 Rivalry", "Racing Rivalry"],
+        "history": ["F1 History", "Racing History"],
+        "legend": ["F1 Legend", "Racing Legend"],
+        "debut": ["F1 Debut", "Rookie"],
+        "retirement": ["F1 Retirement"],
+        "safety": ["F1 Safety", "Safety Car"],
+        "testing": ["F1 Testing", "Pre-Season"],
+        "regulation": ["F1 Regulations", "F1 Rules"],
+        "crash": ["F1 Crash", "Incident"],
+        "overtake": ["Overtake", "Overtaking"],
+        "pit stop": ["Pit Stop", "Strategy"],
+        "2026": ["F1 2026", "2026 Season"],
     }
 
     full_text_lower = full_text.lower()
@@ -132,6 +188,10 @@ def generate_metadata_from_script(script):
             tags.extend(tag_list)
 
     for keyword, tag_list in team_tags.items():
+        if keyword in full_text_lower:
+            tags.extend(tag_list)
+
+    for keyword, tag_list in topic_tags.items():
         if keyword in full_text_lower:
             tags.extend(tag_list)
 
@@ -162,20 +222,18 @@ def upload_video(youtube, video_path, metadata, privacy="private"):
         "status": {
             "privacyStatus": privacy,
             "selfDeclaredMadeForKids": False,
-        }
+        },
     }
 
     media = MediaFileUpload(
         video_path,
         chunksize=1024 * 1024,  # 1MB chunks
         resumable=True,
-        mimetype="video/mp4"
+        mimetype="video/mp4",
     )
 
     request = youtube.videos().insert(
-        part=",".join(body.keys()),
-        body=body,
-        media_body=media
+        part=",".join(body.keys()), body=body, media_body=media
     )
 
     print("Uploading", end="", flush=True)
@@ -193,12 +251,16 @@ def upload_video(youtube, video_path, metadata, privacy="private"):
 def main():
     parser = argparse.ArgumentParser(description="Upload F1 short to YouTube")
     parser.add_argument("--project", required=True, help="Project name")
-    parser.add_argument("--privacy", default=DEFAULT_PRIVACY,
-                        choices=["public", "unlisted", "private"],
-                        help="Video privacy setting")
+    parser.add_argument(
+        "--privacy",
+        default=DEFAULT_PRIVACY,
+        choices=["public", "unlisted", "private"],
+        help="Video privacy setting",
+    )
     parser.add_argument("--title", help="Override auto-generated title")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Show metadata without uploading")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Show metadata without uploading"
+    )
     args = parser.parse_args()
 
     project_dir = get_project_dir(args.project)
@@ -208,7 +270,9 @@ def main():
     # Validate files exist
     if not os.path.exists(video_path):
         print(f"Error: Video not found at {video_path}")
-        print(f"Run video assembly first: python3 src/video_assembler.py --project {args.project}")
+        print(
+            f"Run video assembly first: python3 src/video_assembler.py --project {args.project}"
+        )
         sys.exit(1)
 
     if not os.path.exists(script_path):
@@ -234,7 +298,7 @@ def main():
     print(f"\nTags: {', '.join(metadata['tags'][:10])}...")
     print(f"\nPrivacy: {args.privacy}")
     print(f"Video: {video_path}")
-    print(f"Size: {os.path.getsize(video_path) / (1024*1024):.1f}MB")
+    print(f"Size: {os.path.getsize(video_path) / (1024 * 1024):.1f}MB")
 
     if args.dry_run:
         print("\n[Dry run - no upload performed]")
@@ -261,6 +325,7 @@ def main():
         "url": f"https://youtube.com/shorts/{video_id}",
         "title": metadata["title"],
         "privacy": args.privacy,
+        "upload_status": "uploaded",
     }
 
     with open(f"{project_dir}/upload_info.json", "w") as f:

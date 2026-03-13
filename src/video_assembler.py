@@ -1133,8 +1133,8 @@ def main():
     parser.add_argument(
         "--segment-transition",
         choices=["cut", "cross_dissolve", "fade_to_black"],
-        default="cross_dissolve",
-        help="Transition between segments (default: cross_dissolve)",
+        default=None,
+        help="Transition between segments (default: cut for shorts, cross_dissolve for long-form)",
     )
     parser.add_argument(
         "--word-by-word",
@@ -1183,6 +1183,32 @@ def main():
         script = json.load(f)
 
     segments = script["segments"]
+    script_format = script.get("format", "short")
+
+    # Auto-select transition based on format if not explicitly set.
+    # Shorts use hard cuts to avoid A/V desync from xfade compressing
+    # video duration while audio stays full length.
+    if args.segment_transition is None:
+        if script_format == "short":
+            args.segment_transition = "cut"
+        else:
+            args.segment_transition = "cross_dissolve"
+
+    # Auto-copy logo asset for CTA/outro segments that have no footage yet.
+    # Prevents the footage downloader from wasting time searching YouTube
+    # for the outro, and ensures brand consistency.
+    logo_asset = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "shared", "assets", "daily-news", "logo_zoom.mp4",
+    )
+    for i, seg in enumerate(segments):
+        ctx = seg.get("context", "").lower()
+        if any(kw in ctx for kw in ("outro", "cta")) and os.path.exists(logo_asset):
+            footage_path = f"{footage_dir}/segment_{i:02d}.mp4"
+            if not os.path.exists(footage_path):
+                import shutil
+                shutil.copy2(logo_asset, footage_path)
+                print(f"  Auto-copied logo asset → segment_{i:02d}.mp4 (CTA)")
 
     # Check audio exists
     missing_audio = [
@@ -1461,6 +1487,27 @@ def main():
         ok, msg = verify_output(final_output)
         size_mb = os.path.getsize(final_output) / (1024 * 1024)
 
+        # A/V sync check: compare final video duration against total audio duration.
+        # Catches silent truncation from xfade or -shortest mux issues.
+        total_audio_dur = 0.0
+        for i in range(len(segments)):
+            audio_path = f"{audio_dir}/segment_{i:02d}.mp3"
+            if os.path.exists(audio_path):
+                total_audio_dur += get_video_stream_duration(audio_path)
+
+        video_dur_result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "csv=p=0", final_output],
+            capture_output=True, text=True,
+        )
+        try:
+            video_dur = float(video_dur_result.stdout.strip())
+        except (ValueError, AttributeError):
+            video_dur = 0.0
+
+        sync_diff = abs(video_dur - total_audio_dur)
+        sync_threshold = 1.0 if script_format == "short" else 2.0
+
         print(f"\n{'=' * 60}")
         if ok:
             print(f"SUCCESS: {final_output}")
@@ -1469,6 +1516,14 @@ def main():
         else:
             print(f"WARNING: {msg}")
             print(f"Output: {final_output}")
+
+        if sync_diff > sync_threshold:
+            print(
+                f"WARNING: A/V sync drift detected — video={video_dur:.1f}s vs "
+                f"audio={total_audio_dur:.1f}s (diff={sync_diff:.1f}s, "
+                f"threshold={sync_threshold:.1f}s). "
+                f"{'Try --segment-transition cut to fix.' if args.segment_transition != 'cut' else 'Check footage durations.'}"
+            )
     else:
         print("\nFailed to create final video")
         sys.exit(1)

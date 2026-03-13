@@ -234,10 +234,15 @@ def generate_metadata_from_script(script: Dict) -> Dict:
 
     description = "\n".join(description_parts)
 
-    # Extract tags
-    tags = ["F1", "Formula1", "Formula 1", "Racing", "Motorsport", "Grand Prix"]
+    # Extract tags — start with script.json tags if present, then add auto-detected
+    script_tags = script.get("tags", [])
+    tags = list(script_tags) if script_tags else []
+    # Always ensure base tags are present
+    for base_tag in ["F1", "Formula1", "Formula 1", "Racing", "Motorsport", "Grand Prix"]:
+        if base_tag not in tags:
+            tags.append(base_tag)
 
-    # Driver/team detection
+    # Driver/team detection (supplements script tags)
     full_text = " ".join([seg.get("text", "") for seg in segments]).lower()
 
     driver_tags = {
@@ -446,6 +451,9 @@ def main():
     parser.add_argument(
         "--dry-run", action="store_true", help="Show metadata without uploading"
     )
+    parser.add_argument(
+        "--yes", "-y", action="store_true", help="Skip confirmation prompt"
+    )
     args = parser.parse_args()
 
     project_dir = get_project_dir(args.project)
@@ -537,10 +545,15 @@ def main():
         return
 
     print("\n" + "-" * 70)
-    confirm = input("Proceed with upload? [y/N]: ").strip().lower()
-    if confirm != "y":
-        print("Upload cancelled.")
-        return
+    if not args.yes:
+        try:
+            confirm = input("Proceed with upload? [y/N]: ").strip().lower()
+            if confirm != "y":
+                print("Upload cancelled.")
+                return
+        except EOFError:
+            print("No interactive terminal. Use --yes to skip confirmation.")
+            return
 
     print()
 
@@ -589,6 +602,7 @@ def main():
             "references_count": ref_count,
             "captions_uploaded": captions_uploaded,
             "thumbnail_uploaded": thumbnail_uploaded,
+            "upload_status": "uploaded",
         }
 
         with open(f"{project_dir}/upload_info.json", "w") as f:

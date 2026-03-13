@@ -15,10 +15,11 @@ Pricing (as of 2025):
 - Veo 3 Standard: $0.40/second
 - 8 second video = $1.20 (Fast) or $3.20 (Standard)
 """
+
 import os
+import subprocess
 import sys
 import time
-import subprocess
 from typing import Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -28,6 +29,7 @@ VEO3_AVAILABLE = False
 try:
     from google import genai
     from google.genai import types
+
     VEO3_AVAILABLE = True
 except ImportError:
     pass
@@ -37,7 +39,9 @@ def get_api_key(name: str) -> Optional[str]:
     """Load API key from shared/creds folder."""
     creds_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "shared", "creds", name
+        "shared",
+        "creds",
+        name,
     )
     if os.path.exists(creds_path):
         with open(creds_path) as f:
@@ -52,7 +56,10 @@ def is_veo3_available() -> Tuple[bool, str]:
     Returns: (available, message)
     """
     if not VEO3_AVAILABLE:
-        return False, "google-genai library not installed. Run: pip install google-genai"
+        return (
+            False,
+            "google-genai library not installed. Run: pip install google-genai",
+        )
 
     api_key = get_api_key("google_ai")
     if not api_key:
@@ -69,7 +76,7 @@ def generate_veo3_video(
     resolution: str = "720p",
     use_fast: bool = True,
     negative_prompt: Optional[str] = None,
-    reference_image: Optional[str] = None
+    reference_image: Optional[str] = None,
 ) -> Tuple[bool, str]:
     """
     Generate a video using Google Veo 3 API.
@@ -102,11 +109,11 @@ def generate_veo3_video(
         # Initialize client
         client = genai.Client(api_key=api_key)
 
-        # Choose model
+        # Choose model (updated Mar 2026: -preview suffix → -001)
         if use_fast:
-            model = "veo-3.0-fast-generate-preview"
+            model = "veo-3.0-fast-generate-001"
         else:
-            model = "veo-3.0-generate-preview"
+            model = "veo-3.0-generate-001"
 
         # Build config
         config_params = {
@@ -125,7 +132,7 @@ def generate_veo3_video(
         # Generate video
         if reference_image and os.path.exists(reference_image):
             # Image-to-video generation
-            with open(reference_image, 'rb') as f:
+            with open(reference_image, "rb") as f:
                 image_data = f.read()
 
             operation = client.models.generate_videos(
@@ -181,7 +188,7 @@ def generate_f1_scene(
     duration: int = 8,
     width: int = 1920,
     height: int = 1080,
-    use_fast: bool = True
+    use_fast: bool = True,
 ) -> Tuple[bool, str]:
     """
     Generate an F1-themed video scene using Veo3.
@@ -224,16 +231,12 @@ def generate_f1_scene(
         aspect_ratio=aspect_ratio,
         resolution="720p",  # 720p is default and most reliable
         use_fast=use_fast,
-        negative_prompt=negative_prompt
+        negative_prompt=negative_prompt,
     )
 
 
 def process_veo3_video(
-    input_path: str,
-    output_path: str,
-    target_duration: float,
-    width: int,
-    height: int
+    input_path: str, output_path: str, target_duration: float, width: int, height: int
 ) -> bool:
     """
     Process Veo3 video to match target specs (duration, resolution).
@@ -241,7 +244,16 @@ def process_veo3_video(
     Veo3 generates fixed durations (4/6/8s), so we may need to trim or loop.
     """
     # Get actual duration
-    cmd = ["ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", input_path]
+    cmd = [
+        "ffprobe",
+        "-v",
+        "quiet",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "csv=p=0",
+        input_path,
+    ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     actual_duration = float(result.stdout.strip()) if result.stdout.strip() else 0
 
@@ -253,48 +265,76 @@ def process_veo3_video(
         f"scale={width}:{height}:force_original_aspect_ratio=increase",
         f"crop={width}:{height}",
         "setsar=1",
-        "format=yuv420p"
+        "format=yuv420p",
     ]
 
     # Handle duration mismatch
     if target_duration <= actual_duration:
         # Trim to target duration
         cmd = [
-            "ffmpeg", "-y",
-            "-i", input_path,
-            "-t", str(target_duration),
-            "-vf", ",".join(filters),
-            "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+            "ffmpeg",
+            "-y",
+            "-i",
+            input_path,
+            "-t",
+            str(target_duration),
+            "-vf",
+            ",".join(filters),
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "20",
             "-an",  # Remove audio (we'll add voiceover separately)
-            output_path
+            output_path,
         ]
     else:
         # Need to extend - use slow-motion or loop
         speed_factor = actual_duration / target_duration
         if speed_factor >= 0.5:
             # Slow down the video
-            filters.insert(0, f"setpts={1/speed_factor}*PTS")
+            filters.insert(0, f"setpts={1 / speed_factor}*PTS")
             cmd = [
-                "ffmpeg", "-y",
-                "-i", input_path,
-                "-vf", ",".join(filters),
-                "-t", str(target_duration),
-                "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                "ffmpeg",
+                "-y",
+                "-i",
+                input_path,
+                "-vf",
+                ",".join(filters),
+                "-t",
+                str(target_duration),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-crf",
+                "20",
                 "-an",
-                output_path
+                output_path,
             ]
         else:
             # Loop the video
             loops_needed = int(target_duration / actual_duration) + 1
             cmd = [
-                "ffmpeg", "-y",
-                "-stream_loop", str(loops_needed),
-                "-i", input_path,
-                "-t", str(target_duration),
-                "-vf", ",".join(filters),
-                "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                "ffmpeg",
+                "-y",
+                "-stream_loop",
+                str(loops_needed),
+                "-i",
+                input_path,
+                "-t",
+                str(target_duration),
+                "-vf",
+                ",".join(filters),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-crf",
+                "20",
                 "-an",
-                output_path
+                output_path,
             ]
 
     subprocess.run(cmd, capture_output=True, text=True)
@@ -319,12 +359,16 @@ VEO3_PROMPT_TEMPLATES = {
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description='Generate video using Veo3')
-    parser.add_argument('--prompt', required=True, help='Video description')
-    parser.add_argument('--output', required=True, help='Output video path')
-    parser.add_argument('--duration', type=int, default=8, choices=[4, 6, 8], help='Duration in seconds')
-    parser.add_argument('--fast', action='store_true', help='Use Veo 3 Fast (cheaper)')
-    parser.add_argument('--check', action='store_true', help='Check if Veo3 is available')
+    parser = argparse.ArgumentParser(description="Generate video using Veo3")
+    parser.add_argument("--prompt", required=True, help="Video description")
+    parser.add_argument("--output", required=True, help="Output video path")
+    parser.add_argument(
+        "--duration", type=int, default=8, choices=[4, 6, 8], help="Duration in seconds"
+    )
+    parser.add_argument("--fast", action="store_true", help="Use Veo 3 Fast (cheaper)")
+    parser.add_argument(
+        "--check", action="store_true", help="Check if Veo3 is available"
+    )
     args = parser.parse_args()
 
     if args.check:
@@ -335,9 +379,7 @@ if __name__ == "__main__":
 
     print(f"Generating {args.duration}s video...")
     success, error = generate_f1_scene(
-        args.prompt, args.output,
-        duration=args.duration,
-        use_fast=args.fast or True
+        args.prompt, args.output, duration=args.duration, use_fast=args.fast or True
     )
 
     if success:

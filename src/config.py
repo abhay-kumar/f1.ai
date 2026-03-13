@@ -23,6 +23,7 @@ MAX_CONCURRENT_FRAMES = 4  # For preview extraction
 # YouTube API Config
 YOUTUBE_CLIENT_SECRETS = f"{SHARED_DIR}/creds/youtube_client_secrets.json"
 YOUTUBE_TOKEN_FILE = f"{SHARED_DIR}/creds/youtube_token.pickle"
+YOUTUBE_ANALYTICS_TOKEN_FILE = f"{SHARED_DIR}/creds/youtube_analytics_token.pickle"
 
 # Instagram API Config
 INSTAGRAM_CREDENTIALS_FILE = f"{SHARED_DIR}/creds/instagram"
@@ -55,7 +56,7 @@ SHORTS_AUDIO_SPEED = 1.25  # 25% faster for punchy short-form delivery
 
 # Music Config
 BACKGROUND_MUSIC = f"{SHARED_DIR}/music/background.mp3"
-BACKGROUND_MUSIC_LONGFORM = f"{SHARED_DIR}/music/background_longform.mp3"  # Optional separate music for long-form
+BACKGROUND_MUSIC_LONGFORM = f"{SHARED_DIR}/music/f1_cinematic_rock.mp3"  # Racing-themed cinematic rock (royalty-free)
 MUSIC_VOLUME = 0.04  # Lowered from 0.08 to ensure voiceover dominates
 MUSIC_VOLUME_LONGFORM = 0.05  # Very quiet for long-form content (5%)
 MUSIC_VOLUME_UPLIFTING = 0.08  # Louder for feel-good/victory segments
@@ -137,6 +138,12 @@ F1_DEFAULT_COLOR = "#FFFFFF"
 # Minimum shot duration (seconds) - prevents jarring micro-cuts
 MIN_SHOT_DURATION = 1.5  # For shorts (fast-paced)
 MIN_SHOT_DURATION_LONGFORM = 2.0  # For long-form (slower pacing)
+
+# Maximum static image duration (seconds) - prevents boring static holds
+# A single static image with Ken Burns should not exceed this duration.
+# If a segment's narration exceeds this, split into multiple shots.
+MAX_STATIC_IMAGE_DURATION = 6.0  # Anything longer needs multiple shots
+MAX_STATIC_IMAGE_DURATION_HARD = 8.0  # Technical limit: >8s causes freeze frames
 
 # Valid source types for shots
 SHOT_SOURCE_TYPES = [

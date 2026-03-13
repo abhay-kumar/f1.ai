@@ -1,0 +1,135 @@
+{
+  "name": "f1-weekly-longform",
+  "description": "Weekly long-form F1 video — research-backed, story-driven, retention-optimized",
+  "version": "1.0",
+  "owner": "abhay",
+
+  "context": {
+    "channel": "F1 Burnouts — 274 subscribers, 103K total views",
+    "problem": "Long-form videos average 26 views with 8-9% retention. Viewers leave after ~2 min on 17-22 min videos. Scripts are too long, topics lack depth for their duration, and narratives don't create enough tension to keep viewers watching.",
+    "goal": "Produce one high-quality long-form video per week that achieves >30% audience retention and >500 views within 7 days. Build the long-form audience alongside the working Shorts strategy.",
+    "constraints": [
+      "Channel has 274 subs — can't assume loyal audience, must earn every minute of watch time",
+      "Shorts audience (57K views/month) is the funnel — long-form topics should appeal to that same audience",
+      "Production budget: Gemini TTS (free), yt-dlp footage, stock images. No paid actors or custom shoots.",
+      "Must be completable in one Claude session including all iterations"
+    ]
+  },
+
+  "phases": [
+    {
+      "id": "topic-selection",
+      "name": "Topic Selection & Validation",
+      "description": "Find a topic with genuine depth that the Shorts audience cares about",
+      "tasks": [
+        "Analyze top-performing Shorts from the past 30 days to identify themes the audience engages with",
+        "Propose 3 topic options with: title, angle, why it has 4-6 minutes of genuine story (not padding)",
+        "For each topic: outline the narrative conflict, stakes, and resolution",
+        "Select the topic with the strongest 'why should I keep watching?' through-line"
+      ],
+      "acceptance_criteria": [
+        "Topic directly relates to themes proven by Shorts analytics (driver drama, untold stories, surprising facts)",
+        "Story has a clear protagonist, conflict, and resolution — not just an information dump",
+        "4-6 minute duration target is justified by actual content depth, not repetition",
+        "Title uses curiosity gap pattern (proven by Shorts: 'The Man With More F1 Races Than Any Driver' got 12K views)"
+      ]
+    },
+    {
+      "id": "script-writing",
+      "name": "Script Writing with Self-Review Loop",
+      "description": "Write and iterate on the script until it meets quality bar. This is the most critical phase.",
+      "tasks": [
+        "Research topic thoroughly: official sources, quotes, statistics, lesser-known details",
+        "Write script.json following the f1-scriptwriting skill guidelines",
+        "Self-review against ALL acceptance criteria below",
+        "Rewrite any section that fails criteria — iterate up to 3 times",
+        "Add references for every factual claim",
+        "Run fact checker: python3 src/fact_checker.py --project {name} --web-search"
+      ],
+      "acceptance_criteria": [
+        "HOOK TEST: First 15 seconds must work as a standalone Short — would it stop a scroll?",
+        "TENSION TEST: Every 60 seconds has a question, conflict, or revelation that makes the viewer need to know what's next",
+        "PADDING TEST: Read each segment and ask 'does this move the story forward?' — if no, cut it",
+        "DURATION TEST: Total script word count is 600-900 words (targeting 4-6 min at ~150 wpm narration pace)",
+        "SEGMENT LENGTH TEST: No segment exceeds 80 words / ~30 seconds — long segments kill retention",
+        "VARIETY TEST: Script uses at least 3 different section types (cold_open, rising_action, climax, etc.)",
+        "CTA TEST: Final segment includes subscribe/follow CTA",
+        "TAG TEST: script.json includes 'tags' array with driver names, team names, and topic keywords (15+ tags)",
+        "SELF-REVIEW: After writing, re-read the entire script aloud mentally and mark any moment where attention wanders — those sections must be rewritten or cut",
+        "REFERENCE TEST: Every factual claim has a source in the references array"
+      ]
+    },
+    {
+      "id": "production",
+      "name": "Audio, Footage & Assembly",
+      "description": "Produce the video with quality gates at each step",
+      "tasks": [
+        "Generate audio: python3 src/audio_generator.py --project {name}",
+        "Download footage: python3 src/footage_downloader.py --project {name} --google-search --validate",
+        "Validate ALL footage with Gemini vision: python3 src/gemini_vision_validator.py --project {name}",
+        "Fix any footage mismatches before assembly",
+        "Assemble: python3 src/image_video_assembler.py --project {name} --resolution hd",
+        "Run post-assembly validation checks"
+      ],
+      "acceptance_criteria": [
+        "All footage passes Gemini vision validation",
+        "No segment has footage that doesn't match the narration topic",
+        "Video duration is within 10% of audio duration",
+        "First 15 seconds play correctly (hook is not cut off)",
+        "No freeze frames or black screens between segments",
+        "Each segment's video is at least 80% of its audio duration"
+      ]
+    },
+    {
+      "id": "quality-review",
+      "name": "Final Quality Review",
+      "description": "Review the assembled video against the original quality bar before upload",
+      "tasks": [
+        "Verify final duration is 4-6 minutes",
+        "Verify title uses curiosity gap pattern, not generic description",
+        "Verify tags array has 15+ relevant tags",
+        "Verify description includes story summary, references, and hashtags",
+        "Present to user for final approval"
+      ],
+      "acceptance_criteria": [
+        "Duration: 4-6 minutes (HARD LIMIT — reject if outside this range)",
+        "Title: Uses curiosity/intrigue pattern, under 60 characters",
+        "Tags: 15+ tags including specific driver/team names mentioned in script",
+        "Description: Includes summary, source references, and hashtags",
+        "Audio/video sync: No drift > 0.5 seconds at any point"
+      ]
+    }
+  ],
+
+  "global_acceptance_criteria": {
+    "duration_min_seconds": 240,
+    "duration_max_seconds": 360,
+    "min_word_count": 600,
+    "max_word_count": 900,
+    "min_segments": 10,
+    "max_segment_words": 80,
+    "max_static_image_seconds": 6,
+    "min_tags": 15,
+    "required_sections": ["cold_open", "climax"],
+    "must_have_cta": true,
+    "must_have_references": true,
+    "max_iterations_per_phase": 3
+  },
+
+  "success_metrics": {
+    "target_retention": ">30% average view percentage (vs current 8-9%)",
+    "target_views_7d": ">500 views in first 7 days (vs current 7-44)",
+    "target_watch_time": ">2 minutes average view duration",
+    "target_sub_conversion": ">0.5% (vs current 0%)"
+  },
+
+  "anti_patterns": [
+    "DO NOT pad a 3-minute story to 10 minutes — if the story is 5 minutes, make it 5 minutes",
+    "DO NOT use generic topic titles like 'F1 Testing Recap' — use curiosity gaps",
+    "DO NOT skip the self-review loop — the script is 90% of the video quality",
+    "DO NOT create videos longer than 6 minutes until the channel has >1000 subscribers",
+    "DO NOT reuse the same hook pattern for every video",
+    "DO NOT upload without tags — this killed discoverability on all previous long-form videos",
+    "DO NOT leave a single static image on screen for more than 6 seconds — split into multiple shots (one per entity, or mix image+video). >8s causes literal freeze frames"
+  ]
+}

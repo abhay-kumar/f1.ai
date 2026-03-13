@@ -114,6 +114,29 @@ python3 src/thumbnail_generator.py --project {project} --color gold
 - **Faces work**: If relevant, frames with driver faces get more clicks
 - **Avoid clutter**: Clean, simple designs outperform busy thumbnails
 
+### Logo Composite Thumbnails (Multi-Brand Topics)
+
+When the video features multiple manufacturers, teams, or brands (e.g., "12th Team predictions"), use the **hybrid approach** instead of the auto-generator:
+
+1. **AI background only** — Use Google Imagen to generate a cinematic background (e.g., "cinematic F1 garage dark moody lighting"). Prompt must explicitly say **"no text, no logos, no words"** — AI generators cannot render real logos accurately (wrong logos, duplicates, barely visible).
+2. **Download transparent PNG logos** — Source from pngimg.com, stickpng.com, seeklogo.com. **NEVER use JPG logos** — they create ugly gray/white boxes on dark backgrounds. Verify transparency: `ffprobe -v error -select_streams v:0 -show_entries stream=pix_fmt FILE` must show `rgba`.
+3. **FFmpeg composite** — Layer: background → dark overlay (35-40% black) → text (drawtext) → logos on top of everything:
+   ```bash
+   ffmpeg -y -i bg.jpg -i logo1.png -i logo2.png ... -filter_complex "
+     [0:v]scale=1280:720,drawbox=y=0:w=iw:h=ih:color=black@0.40:t=fill[bg];
+     [1:v]scale=170:-1[logo1]; [2:v]scale=160:-1[logo2]; ...
+     [bg]drawtext=text='MAIN TEXT':fontsize=150:fontcolor=white:font=Impact:...[t1];
+     [t1][logo1]overlay=X:Y[a]; [a][logo2]overlay=X:Y[b]; ...
+   " -frames:v 1 -update 1 -q:v 2 thumbnail.jpg
+   ```
+
+**Key rules:**
+- Logos go **AFTER** the dark overlay and text so they appear bright and clean on top
+- Scale logos proportionally (`scale=W:-1` preserves aspect ratio)
+- Space logos evenly across the bottom row (~200px apart)
+- For silver/gray logos on dark backgrounds, add brightness boost: `eq=brightness=0.3`
+- Store logos in `projects/{name}/temp/logos/` for reuse
+
 ## What Gets Uploaded
 
 ### Video
