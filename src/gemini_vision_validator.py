@@ -348,8 +348,7 @@ def validate_project_shots(project_name: str) -> None:
 
     total, matched, mismatched, skipped = 0, 0, 0, 0
 
-    for seg in script["segments"]:
-        idx = seg["id"] - 1
+    for idx, seg in enumerate(script["segments"]):
         seg_norm = normalize_segment(dict(seg))
         shots = seg_norm.get("shots", [])
 

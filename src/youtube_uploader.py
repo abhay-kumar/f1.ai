@@ -26,7 +26,10 @@ except ImportError:
     sys.exit(1)
 
 # YouTube API config
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+SCOPES = [
+    "https://www.googleapis.com/auth/youtube.upload",
+    "https://www.googleapis.com/auth/youtube.force-ssl",  # Required for posting comments
+]
 CLIENT_SECRETS_FILE = f"{SHARED_DIR}/creds/youtube_client_secrets.json"
 TOKEN_FILE = f"{SHARED_DIR}/creds/youtube_token.pickle"
 
@@ -210,6 +213,32 @@ def generate_metadata_from_script(script):
     }
 
 
+def post_comment(youtube, video_id, comment_text):
+    """Post a top-level comment on a YouTube video"""
+    try:
+        body = {
+            "snippet": {
+                "videoId": video_id,
+                "topLevelComment": {
+                    "snippet": {
+                        "textOriginal": comment_text,
+                    }
+                },
+            }
+        }
+
+        response = youtube.commentThreads().insert(
+            part="snippet", body=body
+        ).execute()
+
+        comment_id = response["snippet"]["topLevelComment"]["id"]
+        return comment_id
+
+    except Exception as e:
+        print(f"Comment posting failed: {e}")
+        return None
+
+
 def upload_video(youtube, video_path, metadata, privacy="private"):
     """Upload video to YouTube"""
     body = {
@@ -258,6 +287,10 @@ def main():
         help="Video privacy setting",
     )
     parser.add_argument("--title", help="Override auto-generated title")
+    parser.add_argument(
+        "--main-video",
+        help="URL of the full-length video to link in a pinned comment",
+    )
     parser.add_argument(
         "--dry-run", action="store_true", help="Show metadata without uploading"
     )
@@ -319,6 +352,18 @@ def main():
     print(f"URL: https://youtube.com/shorts/{video_id}")
     print(f"{'=' * 60}")
 
+    # Post comment with main video link if provided
+    comment_id = None
+    main_video_url = args.main_video or script.get("main_video_url")
+    if main_video_url:
+        print(f"\nPosting comment with full video link...")
+        comment_text = f"👉 Watch the full breakdown here: {main_video_url}"
+        comment_id = post_comment(youtube, video_id, comment_text)
+        if comment_id:
+            print(f"Comment posted! Pin it from YouTube Studio for max visibility.")
+        else:
+            print(f"Comment posting failed — add it manually.")
+
     # Save upload info to project
     upload_info = {
         "video_id": video_id,
@@ -327,6 +372,9 @@ def main():
         "privacy": args.privacy,
         "upload_status": "uploaded",
     }
+    if comment_id:
+        upload_info["comment_id"] = comment_id
+        upload_info["main_video_url"] = main_video_url
 
     with open(f"{project_dir}/upload_info.json", "w") as f:
         json.dump(upload_info, f, indent=2)

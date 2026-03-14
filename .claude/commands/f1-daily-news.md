@@ -61,16 +61,25 @@ Then use `/f1-find-content day` to analyze posts and generate video ideas.
 
 ### Shared Assets
 
-Copy 9:16 vertical logo assets before downloading footage:
+Copy branded assets before downloading footage:
 ```bash
-# Logo intro (segment 1)
-cp shared/assets/daily-news/logo_zoom.mp4 projects/f1-daily-news-{date}/footage/segment_01.mp4
+# Logo intro (segment 1) — logo2.mp4 is the F1 car burnout + logo reveal animation (16:9, 8s, has its own audio)
+# IMPORTANT: Speed up logo2.mp4 to match the segment 1 audio duration so the FULL animation plays.
+# The raw logo2.mp4 is 8s but segment audio is ~3.6s — without speedup the animation gets cut off midway.
+AUDIO_DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 projects/f1-daily-news-{date}/audio/segment_01.mp3)
+VIDEO_DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 shared/assets/logo/logo2.mp4)
+PTS=$(python3 -c "print(f'{$AUDIO_DUR / $VIDEO_DUR:.4f}')")
+ffmpeg -y -i shared/assets/logo/logo2.mp4 \
+  -filter_complex "[0:v]setpts=${PTS}*PTS,fps=30,format=yuv420p[v]" \
+  -map "[v]" -an -c:v h264_videotoolbox -pix_fmt yuv420p \
+  projects/f1-daily-news-{date}/footage/segment_01.mp4
 cp shared/assets/daily-news/logo_with_f1sound.mp3 projects/f1-daily-news-{date}/audio/segment_01.mp3
-# CTA outro (last segment) — ALWAYS use logo, never download random footage
-cp shared/assets/daily-news/logo_zoom.mp4 projects/f1-daily-news-{date}/footage/segment_{N:02d}.mp4
+# CTA outro (last segment) — outro_cta.mp4 is the "F1 BURNOUTS / LIKE • SUBSCRIBE • BELL" card
+cp shared/assets/daily-news/outro_cta.mp4 projects/f1-daily-news-{date}/footage/segment_{N:02d}.mp4
 ```
-If only 16:9 logo exists, use it — the assembler handles the vertical crop with blurred background.
-Segment 0 (hook) needs its own footage. The CTA/outro segment always uses the logo (the assembler auto-copies it if missing, but copy it explicitly to avoid wasted YouTube searches).
+The assembler handles 16:9 → 9:16 vertical crop with blurred background automatically.
+Segment 0 (hook) needs its own footage. The CTA/outro segment always uses outro_cta.mp4 (the assembler auto-copies it if missing, but copy it explicitly to avoid wasted YouTube searches).
+**NEVER use logo_zoom.mp4 for intro or outro** — it is an old asset. Always use logo2.mp4 (intro, sped up) and outro_cta.mp4 (outro).
 
 ### Media Sourcing Priority
 
