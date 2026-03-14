@@ -31,7 +31,7 @@ from src.config import (
 
 # Gemini TTS Configuration
 GEMINI_KEY_FILE = f"{SHARED_DIR}/creds/google_ai"
-GEMINI_MODEL_FLASH = "gemini-2.5-flash-preview-tts"
+GEMINI_MODEL_FLASH = "gemini-2.5-pro-preview-tts"
 GEMINI_DEFAULT_VOICE = "Alnilam"  # Male, friendly, clean American voice
 GEMINI_MAX_CONCURRENT = 2  # Free tier: 10 RPM
 

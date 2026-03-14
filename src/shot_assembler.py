@@ -942,7 +942,8 @@ def _concat_clips(
     try:
         with open(concat_file, "w") as f:
             for clip in clip_paths:
-                f.write(f"file '{clip}'\n")
+                abs_clip = os.path.abspath(clip)
+                f.write(f"file '{abs_clip}'\n")
 
         cmd = [
             "ffmpeg",

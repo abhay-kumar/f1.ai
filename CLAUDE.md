@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 F1.ai is an automated pipeline for creating F1-themed content. It supports five formats:
 
 1. **Shorts** (60-second vertical videos, 9:16) - Quick, engaging content for mobile
-2. **Long-form** (~10-minute horizontal videos, 16:9, up to 4K) - In-depth content with references
+2. **Long-form** (4-6 minute horizontal videos, 16:9, up to 4K) - In-depth story-driven content with references
 3. **Podcasts** (~20-minute audio episodes) - Engaging monologue-style content for RSS.com/Spotify
 4. **Animated videos** (Remotion) - Programmatic React animations synced to voiceover for technical explainers
 5. **Carousels** (Instagram multi-image posts, 1080x1080) - Professional swipeable slide decks for Instagram
@@ -24,19 +24,24 @@ F1.ai is an automated pipeline for creating F1-themed content. It supports five 
 
 All format-specific commands, script.json formats, lessons, and pipeline instructions are in the skill files:
 
-- `/f1-create-short` — Shorts pipeline (9:16 vertical, 60s). Includes shot list reference, footage sourcing lessons, footage validation.
-- `/f1-create-video` — Long-form pipeline (16:9, ~10min) + Animated video (Remotion). Includes storytelling guide, reference system.
+- `/f1-create-short` — Shorts pipeline (9:16 vertical, up to 2:40). Includes shot list reference, footage validation.
+- `/f1-create-video` — Long-form pipeline (16:9, 4-6min) + Animated video (Remotion). Includes storytelling guide, reference system.
 - `/f1-create-podcast` — Podcast pipeline (~20min audio). Includes host persona, SSML, chunked TTS, music mixing.
 - `/f1-create-carousel` — Instagram carousel pipeline (1080x1080). Includes themes, slide types, meme compositing.
 - `/f1-daily-news` — Daily F1 news update shorts. Includes hook pattern, shared assets, Reddit-first media sourcing.
-- `/f1-reddit-idea` — Reddit thread → short video
 - `/f1-find-content` — Reddit trend discovery
 - `/f1-upload-short` — YouTube Shorts + Instagram upload
-- `/f1-upload-video` — YouTube long-form upload
+- `/f1-upload-video` — YouTube long-form upload with auto-generated thumbnail
 - `/f1-upload-podcast` — RSS.com podcast upload
 - `/f1-upload-carousel` — Instagram carousel upload
+- `/f1-channel-review` — YouTube analytics review and content strategy recommendations
 - `/f1-archive` — Project cleanup + Google Drive
 - `/f1-release` — Git release workflow
+
+**Skills** (auto-triggered by topic, shared across commands):
+- `f1-scriptwriting` — Hook patterns, segment structure, pacing rules, one-entity-one-shot
+- `f1-footage-sourcing` — Source priority, Reddit media, Gemini validation, QA checklist
+- `f1-podcast-voice` — Host persona, emotion markers, monologue style
 
 ## Architecture
 
@@ -57,9 +62,10 @@ script.json → fact_check → audio/*.mp3 → footage/*.mp4 → previews/*.jpg 
 - `stock_image_fetcher.py` - Pexels/Unsplash API for stock photos, Google Images for person portraits
 - `google_image_search.py` - Playwright-based Google Images scraper + Google-for-YouTube search
 - `gemini_vision_validator.py` - Gemini Flash vision validation for footage accuracy (thumbnail + file validation)
-- `image_video_assembler.py` - Long-form: YouTube-first visual routing with color grading, transition SFX, animated intro, context-aware music
+- `image_video_assembler.py` - Long-form: YouTube-first visual routing with color grading, transition SFX, animated intro, context-aware music, SRT caption generation
 - `color_grader.py` - FFmpeg color grading presets (B&W, vintage, cinematic, warm, cool)
 - `intro_generator.py` - Animated logo intro with engine rev + swoosh SFX
+- `thumbnail_generator.py` - Auto-generated viral thumbnails with team colors (for simple topics; use hybrid logo composite approach for multi-brand topics)
 - `veo3_generator.py` - Google Veo3 AI video generation for abstract concepts
 - `download_footage.sh` - Sequential footage downloader in isolated subprocesses (fallback for hangs/memory leaks)
 - `video_assembler.py` - Shorts: 9:16 vertical FFmpeg composition with GPU acceleration
@@ -67,7 +73,9 @@ script.json → fact_check → audio/*.mp3 → footage/*.mp4 → previews/*.jpg 
 - `carousel_generator.py` - Carousel: HTML/CSS slide rendering via Playwright, 14 themes, 6 slide types
 - `youtube_uploader.py` - Shorts: OAuth upload with #Shorts hashtag
 - `instagram_uploader.py` - Shorts: Instagram Reels upload via instagrapi
-- `youtube_uploader_longform.py` - Long-form: Standard video upload with references in description
+- `youtube_uploader_longform.py` - Long-form: Standard video upload with references in description, reads tags from script.json
+- `youtube_analytics.py` - Channel analytics: view counts, retention, format performance comparison
+- `gdrive_uploader.py` - Google Drive upload for project archival
 
 **Project Structure (Video):**
 ```
@@ -116,6 +124,7 @@ projects/{name}/
 - Google Gemini Flash vision (free tier via `google-genai` - footage validation)
 - Remotion (`npm install remotion @remotion/cli` - animated video rendering)
 - Node.js (required for Remotion)
+- Google Drive API (project archival, same GCP project as YouTube)
 
 ## Critical Technical Notes
 
@@ -125,6 +134,9 @@ projects/{name}/
 4. **Re-encode during concat** - Stream copy corrupts timestamps with mixed source formats
 5. **Cache awareness** - Audio files are cached; delete segment MP3 to regenerate
 6. **Duration validation** - Assembly verifies video/audio durations match within 1 second
+7. **Static image max 6s** - No single image shot should hold >6s; >8s causes freeze frames. Split into multiple shots (one per entity). Runtime warning in shot_assembler.
+8. **SRT captions sync** - Caption generator accounts for intro video offset after cold_open. Captions are split into 8-14 word chunks, not full paragraphs.
+9. **Logo thumbnails** - AI generators cannot render real logos. For multi-brand topics, use hybrid approach: Imagen for background + FFmpeg overlay of transparent PNG logos.
 
 ## Shorts: 16:9 Video in 9:16 Frame (Blurred Background)
 
