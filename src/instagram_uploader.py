@@ -12,11 +12,8 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from src.config import (
-    INSTAGRAM_CREDENTIALS_FILE,
-    INSTAGRAM_SESSION_FILE,
-    get_project_dir,
-)
+from src.config import get_project_dir
+from channels import channel_cred, load_channel_from_script
 
 try:
     from instagrapi import Client
@@ -30,18 +27,12 @@ except ImportError:
 # Instagram caption limit
 MAX_CAPTION_LENGTH = 2200
 
-# F1 Fan Content Disclaimer (shorter version for Instagram)
-F1_FAN_DISCLAIMER = (
-    "This is unofficial fan content — not affiliated with Formula 1, FIA, or FOM. "
-    "Created for commentary and entertainment."
-)
 
-
-def get_credentials():
+def get_credentials(credentials_file):
     """Load Instagram credentials from file (username on line 1, password on line 2)"""
-    if not os.path.exists(INSTAGRAM_CREDENTIALS_FILE):
+    if not os.path.exists(credentials_file):
         return None
-    with open(INSTAGRAM_CREDENTIALS_FILE) as f:
+    with open(credentials_file) as f:
         lines = f.read().strip().split("\n")
         if len(lines) >= 2:
             return {"username": lines[0].strip(), "password": lines[1].strip()}
@@ -133,28 +124,31 @@ def _create_client():
     return cl
 
 
-def get_authenticated_client(delete_session=False):
+def get_authenticated_client(channel, delete_session=False):
     """Authenticate and return an instagrapi Client with session persistence"""
-    credentials = get_credentials()
+    credentials_file = channel_cred(channel, channel["creds"]["instagram"])
+    session_file = channel_cred(channel, channel["creds"]["instagram_session"])
+
+    credentials = get_credentials(credentials_file)
     if not credentials:
-        print(f"Error: Instagram credentials not found at {INSTAGRAM_CREDENTIALS_FILE}")
+        print(f"Error: Instagram credentials not found at {credentials_file}")
         print("\nSetup instructions:")
-        print("1. Create the file: shared/creds/instagram")
+        print(f"1. Create the file: {credentials_file}")
         print("2. Line 1: your Instagram username")
         print("3. Line 2: your Instagram password")
         return None
 
     # Delete stale session if requested
-    if delete_session and os.path.exists(INSTAGRAM_SESSION_FILE):
-        os.remove(INSTAGRAM_SESSION_FILE)
+    if delete_session and os.path.exists(session_file):
+        os.remove(session_file)
         print("Deleted stale session file. Starting fresh.")
 
     cl = _create_client()
 
     # Try to reuse existing session
-    if os.path.exists(INSTAGRAM_SESSION_FILE):
+    if os.path.exists(session_file):
         try:
-            cl.load_settings(INSTAGRAM_SESSION_FILE)
+            cl.load_settings(session_file)
             # Override device settings from saved session with modern version
             cl.set_device(DEVICE_SETTINGS)
             cl.login(credentials["username"], credentials["password"])
@@ -164,7 +158,7 @@ def get_authenticated_client(delete_session=False):
         except Exception:
             print("Saved session expired, deleting and logging in fresh...")
             try:
-                os.remove(INSTAGRAM_SESSION_FILE)
+                os.remove(session_file)
             except OSError:
                 pass
 
@@ -188,8 +182,8 @@ def get_authenticated_client(delete_session=False):
         pass  # Non-critical, proceed anyway
 
     # Save session for reuse
-    os.makedirs(os.path.dirname(INSTAGRAM_SESSION_FILE), exist_ok=True)
-    cl.dump_settings(INSTAGRAM_SESSION_FILE)
+    os.makedirs(os.path.dirname(session_file), exist_ok=True)
+    cl.dump_settings(session_file)
     print("Logged in and session saved.")
     return cl
 
@@ -228,7 +222,9 @@ def _try_resolve_challenge(cl):
 
 def generate_caption_from_script(script):
     """Generate Instagram caption from script.json"""
-    base_title = script.get("title", "F1 Short")
+    channel = load_channel_from_script(script)
+
+    base_title = script.get("title", "Short")
     segments = script.get("segments", [])
     full_text = " ".join([seg["text"] for seg in segments])
 
@@ -236,37 +232,15 @@ def generate_caption_from_script(script):
     summary = full_text[:300] + "..." if len(full_text) > 300 else full_text
 
     # Extract driver/team hashtags
-    hashtags = ["#F1", "#Formula1", "#Reels", "#FormulaOne", "#Racing"]
-
-    driver_hashtags = {
-        "vettel": "#Vettel",
-        "webber": "#Webber",
-        "norris": "#LandoNorris",
-        "piastri": "#Piastri",
-        "verstappen": "#Verstappen",
-        "hamilton": "#LewisHamilton",
-        "leclerc": "#Leclerc",
-        "alonso": "#Alonso",
-    }
-
-    team_hashtags = {
-        "red bull": "#RedBull",
-        "mclaren": "#McLaren",
-        "ferrari": "#Ferrari",
-        "mercedes": "#Mercedes",
-        "aston martin": "#AstonMartin",
-        "alpine": "#Alpine",
-        "williams": "#Williams",
-        "haas": "#Haas",
-    }
+    hashtags = list(channel["base_hashtags"])
 
     full_text_lower = full_text.lower()
 
-    for keyword, tag in driver_hashtags.items():
+    for keyword, tag in channel["driver_hashtags"].items():
         if keyword in full_text_lower:
             hashtags.append(tag)
 
-    for keyword, tag in team_hashtags.items():
+    for keyword, tag in channel["team_hashtags"].items():
         if keyword in full_text_lower:
             hashtags.append(tag)
 
@@ -288,7 +262,7 @@ def generate_caption_from_script(script):
         "",
         hashtag_line,
         "",
-        F1_FAN_DISCLAIMER,
+        channel["disclaimer_instagram"],
     ]
     caption = "\n".join(caption_parts)
 
@@ -299,7 +273,7 @@ def generate_caption_from_script(script):
     return caption
 
 
-def upload_reel(client, video_path, caption, max_retries=2):
+def upload_reel(client, video_path, caption, session_file, max_retries=2):
     """Upload video as an Instagram Reel, resolving challenges if needed"""
     for attempt in range(1, max_retries + 1):
         print(
@@ -322,8 +296,8 @@ def upload_reel(client, video_path, caption, max_retries=2):
             if _try_resolve_challenge(client):
                 # Save updated session after challenge resolution
                 try:
-                    os.makedirs(os.path.dirname(INSTAGRAM_SESSION_FILE), exist_ok=True)
-                    client.dump_settings(INSTAGRAM_SESSION_FILE)
+                    os.makedirs(os.path.dirname(session_file), exist_ok=True)
+                    client.dump_settings(session_file)
                 except Exception:
                     pass
                 print("Waiting 10 seconds before retry...")
@@ -345,9 +319,9 @@ def upload_reel(client, video_path, caption, max_retries=2):
                 if _try_resolve_challenge(client):
                     try:
                         os.makedirs(
-                            os.path.dirname(INSTAGRAM_SESSION_FILE), exist_ok=True
+                            os.path.dirname(session_file), exist_ok=True
                         )
-                        client.dump_settings(INSTAGRAM_SESSION_FILE)
+                        client.dump_settings(session_file)
                     except Exception:
                         pass
                     print("Waiting 10 seconds before retry...")
@@ -400,6 +374,7 @@ def main():
     with open(script_path) as f:
         script = json.load(f)
 
+    channel = load_channel_from_script(script)
     caption = args.caption if args.caption else generate_caption_from_script(script)
 
     # Display metadata
@@ -417,11 +392,12 @@ def main():
     print("\n" + "-" * 60)
 
     # Authenticate and upload
-    client = get_authenticated_client(delete_session=args.delete_session)
+    client = get_authenticated_client(channel, delete_session=args.delete_session)
     if not client:
         sys.exit(1)
 
-    media = upload_reel(client, video_path, caption)
+    session_file = channel_cred(channel, channel["creds"]["instagram_session"])
+    media = upload_reel(client, video_path, caption, session_file)
 
     media_id = media.pk
     media_code = media.code

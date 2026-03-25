@@ -33,6 +33,7 @@ from typing import Dict, Optional, Tuple
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import SHARED_DIR, get_project_dir
 from src.ssml_generator import generate_ssml
+from channels import load_channel_from_script
 
 # Lower concurrency for Gemini free tier (10 RPM limit)
 # Using 2 workers with rate limiting is optimal
@@ -62,8 +63,8 @@ GEMINI_VOICES = {
     "vale": "Vale",  # Mellow
 }
 
-# Default voice for F1 Burnouts podcast (conversational, engaging)
-DEFAULT_VOICE = "Charon"  # Informative tone, good for podcast hosting
+# Default voice — overridden by channel config at runtime
+DEFAULT_VOICE = "Charon"
 
 # Rate limiting for free tier (10 requests per minute)
 RATE_LIMIT_REQUESTS = 10
@@ -165,45 +166,15 @@ def get_duration(file_path: str) -> float:
     return float(result.stdout.strip()) if result.stdout.strip() else 0
 
 
-# =============================================================================
-# VOICE PROFILE FOR CONSISTENT PODCAST VOICE
-# =============================================================================
+# Voice profile is loaded from channel config at runtime
+# See channels/f1.py podcast.voice_profile for the F1 version
+PODCAST_VOICE_PROFILE = None  # Set by _get_voice_profile()
 
-PODCAST_VOICE_PROFILE = """
-## Audio Profile
-You are the host of "F1 Burnouts", a passionate and knowledgeable Formula 1 podcast host.
 
-Character traits:
-- Expert in F1 engineering, regulations, and history
-- Conversational and engaging, like talking to a friend
-- Witty with well-timed humor and occasional sarcasm
-- Genuinely passionate about the sport
-- Speaks with natural flow and breathing
-
-Voice characteristics:
-- Warm, confident, and authoritative
-- SLOW, DELIBERATE PACING - speak at approximately 140-150 words per minute
-- Take your time with each sentence, let words breathe
-- Varied intonation to keep listeners engaged
-- Clear articulation but not overly formal
-- Natural pauses between sentences (0.5-1 second)
-
-## Director's Notes - PACING IS CRITICAL
-- SPEAK SLOWLY AND DELIBERATELY - this is a podcast, not an audiobook on 2x speed
-- Maintain consistent voice throughout the entire podcast
-- Use LONG natural pauses between topics (1-2 seconds, like taking a breath)
-- Build energy during exciting moments, soften during reflective ones
-- Keep the same fundamental voice character from start to finish
-- Speak as one continuous monologue, not separate disconnected pieces
-- Do NOT rush through the content - listeners need time to absorb information
-- When you see [speaking slowly], reduce pace even further
-
-## Performance Style
-- Conversational podcast host speaking directly to the audience
-- Natural transitions between topics
-- Occasional emphasis on key words for impact
-- Breathing pauses between paragraphs
-"""
+def _get_voice_profile(script: dict = None) -> str:
+    """Load the podcast voice profile from channel config."""
+    channel = load_channel_from_script(script or {})
+    return channel.get("podcast", {}).get("voice_profile", "")
 
 
 def build_podcast_transcript(script: dict) -> str:
@@ -274,7 +245,8 @@ def generate_full_podcast_audio(
         )
 
     # Build the complete prompt with voice profile and transcript
-    full_prompt = f"""{PODCAST_VOICE_PROFILE}
+    voice_profile = _get_voice_profile(script)
+    full_prompt = f"""{voice_profile}
 
 ## Transcript
 Read the following podcast script naturally, as one continuous performance:
@@ -862,7 +834,7 @@ EXAMPLES:
         print("\n" + "=" * 60)
         print("VOICE PROFILE")
         print("=" * 60)
-        print(PODCAST_VOICE_PROFILE.strip())
+        print(_get_voice_profile(script).strip())
         print("\n" + "=" * 60)
         print("TRANSCRIPT PREVIEW (first 500 chars)")
         print("=" * 60)

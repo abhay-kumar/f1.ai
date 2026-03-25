@@ -22,6 +22,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import SHARED_DIR, get_project_dir
+from channels import channel_cred, load_channel_from_script
 
 try:
     from playwright.sync_api import sync_playwright
@@ -33,16 +34,12 @@ except ImportError:
 
 # RSS.com configuration
 RSS_LOGIN_URL = "https://dashboard.rss.com/auth/sign-in"
-RSS_NEW_EPISODE_URL = "https://dashboard.rss.com/podcasts/f1-burnouts/new-episode/"
-
-# Credentials file
-RSS_CREDENTIALS_FILE = f"{SHARED_DIR}/creds/rss_com"
 
 
-def get_credentials():
+def get_credentials(creds_file: str):
     """Load RSS.com credentials from file"""
-    if os.path.exists(RSS_CREDENTIALS_FILE):
-        with open(RSS_CREDENTIALS_FILE) as f:
+    if os.path.exists(creds_file):
+        with open(creds_file) as f:
             lines = f.read().strip().split("\n")
             if len(lines) >= 2:
                 return {"email": lines[0], "password": lines[1]}
@@ -92,15 +89,7 @@ def generate_episode_description(script: dict) -> str:
         word_count = len(text.split())
         current_time += word_count / words_per_second
 
-    lines.extend(
-        [
-            "",
-            "---",
-            "F1 Burnouts - Your weekly dose of Formula 1 passion, engineering deep-dives, and honest takes.",
-            "",
-            "#F1 #Formula1 #Podcast #Motorsport #Racing",
-        ]
-    )
+    # Channel-specific tagline and hashtags are added by the caller
 
     return "\n".join(lines)
 
@@ -130,10 +119,15 @@ def upload_episode(
     with open(script_path) as f:
         script = json.load(f)
 
+    channel = load_channel_from_script(script)
+    podcast_config = channel.get("podcast", {})
+    show_name = podcast_config.get("show_name", "Podcast")
+
     # Generate metadata
-    base_title = script.get("title", "F1 Burnouts Episode")
-    if base_title.lower().startswith("f1 burnouts:"):
-        base_title = base_title[12:].strip()
+    base_title = script.get("title", f"{show_name} Episode")
+    prefix = f"{show_name}:"
+    if base_title.lower().startswith(prefix.lower()):
+        base_title = base_title[len(prefix):].strip()
 
     if title_override:
         title = title_override
@@ -143,6 +137,11 @@ def upload_episode(
         title = base_title
 
     description = generate_episode_description(script)
+    # Append channel-specific tagline and hashtags
+    tagline = podcast_config.get("tagline", "")
+    hashtags = podcast_config.get("hashtags", "")
+    if tagline or hashtags:
+        description += f"\n\n---\n{tagline}\n\n{hashtags}"
 
     # Get file size
     file_size = os.path.getsize(audio_path) / (1024 * 1024)
@@ -165,9 +164,10 @@ def upload_episode(
         return
 
     # Get credentials
-    credentials = get_credentials()
+    rss_creds_file = channel_cred(channel, channel["creds"]["rss_com"])
+    credentials = get_credentials(rss_creds_file)
     if not credentials:
-        print("Error: No credentials found at", RSS_CREDENTIALS_FILE)
+        print("Error: No credentials found at", rss_creds_file)
         sys.exit(1)
 
     print("\nLaunching browser...")
@@ -200,9 +200,10 @@ def upload_episode(
             print(f"Logged in. Current URL: {page.url}")
 
             # Step 3: Navigate to podcast page and click New Episode
-            print("Navigating to podcast page...")
+            rss_dashboard = podcast_config.get("rss_dashboard_url", "https://dashboard.rss.com/podcasts/")
+            print(f"Navigating to podcast page ({rss_dashboard})...")
             page.goto(
-                "https://dashboard.rss.com/podcasts/f1-burnouts/",
+                rss_dashboard,
                 wait_until="domcontentloaded",
                 timeout=60000,
             )
@@ -258,16 +259,7 @@ def upload_episode(
 
             # Step 8: Add keywords
             print("\nAdding keywords...")
-            keywords = [
-                "F1",
-                "Formula 1",
-                "Podcast",
-                "Motorsport",
-                "Racing",
-                "Sustainable Fuel",
-                "2026",
-                "F1 Burnouts",
-            ]
+            keywords = podcast_config.get("keywords", ["Podcast"])
             try:
                 # Look for keywords input or button to expand keywords section
                 keyword_section = page.locator(

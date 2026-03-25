@@ -16,6 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import SHARED_DIR
+from channels import channel_cred, load_channel
 
 # Google Drive API imports
 try:
@@ -30,14 +31,17 @@ except ImportError:
 
 # Google Drive API config
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
-CLIENT_SECRETS_FILE = f"{SHARED_DIR}/creds/youtube_client_secrets.json"
+# GDrive token is shared (not per-channel) since it's for archival
 TOKEN_FILE = f"{SHARED_DIR}/creds/gdrive_token.pickle"
 
-DRIVE_FOLDER_NAME = "f1.ai"
+DRIVE_FOLDER_NAME = "iti.ai"
 
 
-def get_authenticated_service():
+def get_authenticated_service(channel_id: str = None):
     """Authenticate and return Google Drive API service."""
+    ch = load_channel(channel_id)
+    client_secrets = channel_cred(ch, ch["creds"]["youtube_client_secrets"])
+
     credentials = None
 
     if os.path.exists(TOKEN_FILE):
@@ -48,18 +52,18 @@ def get_authenticated_service():
         if credentials and credentials.expired and credentials.refresh_token:
             credentials.refresh(Request())
         else:
-            if not os.path.exists(CLIENT_SECRETS_FILE):
-                print(f"Error: OAuth credentials not found at {CLIENT_SECRETS_FILE}")
+            if not os.path.exists(client_secrets):
+                print(f"Error: OAuth credentials not found at {client_secrets}")
                 print("\nThis uses the same OAuth client as YouTube upload.")
                 print("Setup instructions:")
                 print("1. Go to https://console.cloud.google.com/")
                 print("2. Enable the Google Drive API for your project")
                 print("3. Use the same OAuth 2.0 credentials as YouTube")
-                print(f"4. Ensure file exists at: {CLIENT_SECRETS_FILE}")
+                print(f"4. Ensure file exists at: {client_secrets}")
                 return None
 
             flow = InstalledAppFlow.from_client_secrets_file(
-                CLIENT_SECRETS_FILE, SCOPES
+                client_secrets, SCOPES
             )
             credentials = flow.run_local_server(port=0)
 

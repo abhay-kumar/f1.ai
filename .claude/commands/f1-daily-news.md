@@ -67,15 +67,15 @@ Copy branded assets before downloading footage:
 # IMPORTANT: Speed up logo2.mp4 to match the segment 1 audio duration so the FULL animation plays.
 # The raw logo2.mp4 is 8s but segment audio is ~3.6s — without speedup the animation gets cut off midway.
 AUDIO_DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 projects/f1-daily-news-{date}/audio/segment_01.mp3)
-VIDEO_DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 shared/assets/logo/logo2.mp4)
+VIDEO_DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 shared/channels/f1/assets/logo/logo2.mp4)
 PTS=$(python3 -c "print(f'{$AUDIO_DUR / $VIDEO_DUR:.4f}')")
-ffmpeg -y -i shared/assets/logo/logo2.mp4 \
+ffmpeg -y -i shared/channels/f1/assets/logo/logo2.mp4 \
   -filter_complex "[0:v]setpts=${PTS}*PTS,fps=30,format=yuv420p[v]" \
   -map "[v]" -an -c:v h264_videotoolbox -pix_fmt yuv420p \
   projects/f1-daily-news-{date}/footage/segment_01.mp4
-cp shared/assets/daily-news/logo_with_f1sound.mp3 projects/f1-daily-news-{date}/audio/segment_01.mp3
+cp shared/channels/f1/assets/daily-news/logo_with_f1sound.mp3 projects/f1-daily-news-{date}/audio/segment_01.mp3
 # CTA outro (last segment) — outro_cta.mp4 is the "F1 BURNOUTS / LIKE • SUBSCRIBE • BELL" card
-cp shared/assets/daily-news/outro_cta.mp4 projects/f1-daily-news-{date}/footage/segment_{N:02d}.mp4
+cp shared/channels/f1/assets/daily-news/outro_cta.mp4 projects/f1-daily-news-{date}/footage/segment_{N:02d}.mp4
 ```
 The assembler handles 16:9 → 9:16 vertical crop with blurred background automatically.
 Segment 0 (hook) needs its own footage. The CTA/outro segment always uses outro_cta.mp4 (the assembler auto-copies it if missing, but copy it explicitly to avoid wasted YouTube searches).

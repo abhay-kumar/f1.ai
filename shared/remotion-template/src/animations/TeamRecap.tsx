@@ -8,8 +8,12 @@ import {
 } from "remotion";
 import { TEAM_COLORS } from "../data/segments";
 
+interface TeamRecapProps {
+  channelName?: string;
+}
+
 // Final sign-off: rapid-fire team callback with all team colors
-export const TeamRecap: React.FC = () => {
+export const TeamRecap: React.FC<TeamRecapProps> = ({ channelName = "F1 BURNOUTS" }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
@@ -198,7 +202,7 @@ export const TeamRecap: React.FC = () => {
             letterSpacing: 3,
           }}
         >
-          F1 BURNOUTS
+          {channelName}
         </div>
         <div
           style={{

@@ -23,14 +23,14 @@ import multiprocessing
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import (
-    get_project_dir, BACKGROUND_MUSIC,
+    get_project_dir,
     LONGFORM_FRAME_RATE, LONGFORM_AUDIO_BITRATE,
     LONGFORM_OUTPUT_WIDTH_4K, LONGFORM_OUTPUT_HEIGHT_4K,
     LONGFORM_OUTPUT_WIDTH_HD, LONGFORM_OUTPUT_HEIGHT_HD,
     LONGFORM_VIDEO_BITRATE_4K, LONGFORM_VIDEO_BITRATE_HD,
-    MUSIC_VOLUME_LONGFORM, F1_TEAM_COLORS, F1_DEFAULT_COLOR,
-    OUTRO_AUDIO_LONGFORM, CREDITS_DURATION_LONGFORM
+    MUSIC_VOLUME_LONGFORM, CREDITS_DURATION_LONGFORM
 )
+from channels import channel_asset, load_channel_from_script
 
 # Concurrency settings
 MAX_CONCURRENT_SEGMENTS = min(4, multiprocessing.cpu_count())
@@ -114,20 +114,23 @@ def wrap_text(text: str, max_chars: int = 60) -> List[str]:
     return lines
 
 
-def get_team_color(text: str) -> str:
-    """Detect team/driver mentions and return appropriate F1 team color"""
+def get_team_color(text: str, channel: dict = None) -> str:
+    """Detect team/driver mentions and return appropriate team color"""
+    if channel is None:
+        channel = load_channel_from_script({})
     text_lower = text.lower()
-    for keyword, color in F1_TEAM_COLORS.items():
+    for keyword, color in channel["entity_colors"].items():
         if keyword in text_lower:
             return color
-    return F1_DEFAULT_COLOR
+    return channel["default_text_color"]
 
 
 def create_segment_video(segment_idx: int, segment: Dict, audio_path: str,
                          footage_dir: str, output_path: str,
                          width: int, height: int, bitrate: str,
                          encoder: str = None, encoder_flags: list = None,
-                         no_text: bool = False) -> Tuple[bool, Optional[str]]:
+                         no_text: bool = False,
+                         channel: dict = None) -> Tuple[bool, Optional[str]]:
     """Create video segment with letterbox effect and optional text captions for 16:9"""
     footage_file = f"{footage_dir}/{segment['footage']}"
     if not os.path.exists(footage_file):
@@ -142,10 +145,12 @@ def create_segment_video(segment_idx: int, segment: Dict, audio_path: str,
     else:
         # Wrap text for wider 16:9 format
         lines = wrap_text(segment['text'], max_chars=70)
-        team_color = get_team_color(segment['text'])
+        team_color = get_team_color(segment['text'], channel)
 
         # Font and sizing for 16:9 (larger screen = can use bigger fonts)
-        f1_font = "/Users/abhaykumar/Documents/f1.ai/shared/fonts/Formula1-Bold.ttf"
+        if channel is None:
+            channel = load_channel_from_script({})
+        f1_font = channel_asset(channel, channel["font_bold"])
 
         # Dynamic font size based on resolution and line count
         if width >= 3840:  # 4K
@@ -249,11 +254,11 @@ def create_segment_video(segment_idx: int, segment: Dict, audio_path: str,
 
 def process_segment_video(args: Tuple) -> Tuple[int, bool, float, Optional[str]]:
     """Process a single segment video (for concurrent execution)"""
-    idx, segment, audio_path, footage_dir, output_path, width, height, bitrate, encoder, encoder_flags, no_text = args
+    idx, segment, audio_path, footage_dir, output_path, width, height, bitrate, encoder, encoder_flags, no_text, channel = args
 
     success, error = create_segment_video(
         idx, segment, audio_path, footage_dir, output_path,
-        width, height, bitrate, encoder, encoder_flags, no_text
+        width, height, bitrate, encoder, encoder_flags, no_text, channel
     )
 
     if success:
@@ -263,21 +268,27 @@ def process_segment_video(args: Tuple) -> Tuple[int, bool, float, Optional[str]]
 
 
 def create_outro_video(script: Dict, output_path: str, width: int, height: int,
-                       bitrate: str, encoder: str, encoder_flags: list) -> bool:
+                       bitrate: str, encoder: str, encoder_flags: list,
+                       channel: dict = None) -> bool:
     """Create outro video with reusable voiceover and brief credits overlay.
 
     Uses pre-generated outro audio (~19s) with a short credits visual overlay
     at the beginning, then shows channel branding for the rest.
     """
 
+    if channel is None:
+        channel = load_channel_from_script(script)
+
+    outro_audio_path = channel_asset(channel, channel["outro_audio"])
+
     # Check if outro audio exists
-    if not os.path.exists(OUTRO_AUDIO_LONGFORM):
-        print(f"Warning: Outro audio not found at {OUTRO_AUDIO_LONGFORM}")
+    if not os.path.exists(outro_audio_path):
+        print(f"Warning: Outro audio not found at {outro_audio_path}")
         return False
 
-    outro_duration = get_duration(OUTRO_AUDIO_LONGFORM)
+    outro_duration = get_duration(outro_audio_path)
 
-    f1_font = "/Users/abhaykumar/Documents/f1.ai/shared/fonts/Formula1-Bold.ttf"
+    f1_font = channel_asset(channel, channel["font_bold"])
 
     if width >= 3840:
         title_size = 72
@@ -292,7 +303,7 @@ def create_outro_video(script: Dict, output_path: str, width: int, height: int,
     credits_text = "Sources & References in Description"
 
     # Channel branding for the rest of the outro
-    channel_name = "F1 BURNOUTS"
+    channel_name = channel["name_upper"]
     cta_text = "LIKE • SUBSCRIBE • BELL"
 
     # Video filter: show credits briefly, then channel branding
@@ -327,7 +338,7 @@ def create_outro_video(script: Dict, output_path: str, width: int, height: int,
         "ffmpeg", "-y",
         "-f", "lavfi",
         "-i", f"color=black:s={width}x{height}:d={outro_duration}:r={LONGFORM_FRAME_RATE}",
-        "-i", OUTRO_AUDIO_LONGFORM,
+        "-i", outro_audio_path,
         "-filter_complex", filter_complex,
         "-map", "[out]",
         "-map", "1:a",
@@ -348,7 +359,8 @@ def create_outro_video(script: Dict, output_path: str, width: int, height: int,
 
 
 def create_credits_video(script: Dict, output_path: str, width: int, height: int,
-                         bitrate: str, encoder: str, encoder_flags: list) -> bool:
+                         bitrate: str, encoder: str, encoder_flags: list,
+                         channel: dict = None) -> bool:
     """Create end credits video with references (legacy, use create_outro_video instead)"""
 
     # Gather all references from script
@@ -379,7 +391,9 @@ def create_credits_video(script: Dict, output_path: str, width: int, height: int
                 sources.append(ref)
 
     # Build credits text
-    f1_font = "/Users/abhaykumar/Documents/f1.ai/shared/fonts/Formula1-Bold.ttf"
+    if channel is None:
+        channel = load_channel_from_script(script)
+    f1_font = channel_asset(channel, channel["font_bold"])
 
     if width >= 3840:
         title_size = 72
@@ -472,13 +486,14 @@ def create_credits_video(script: Dict, output_path: str, width: int, height: int
     return os.path.exists(output_path)
 
 
-def add_background_music(video_path: str, output_path: str, music_volume: float = MUSIC_VOLUME_LONGFORM) -> bool:
+def add_background_music(video_path: str, output_path: str, music_path: str,
+                         music_volume: float = MUSIC_VOLUME_LONGFORM) -> bool:
     """Mix background music under video audio at lower volume for long-form.
 
     Converts voiceover to stereo, then mixes with stereo background music.
     Uses amix with normalize=0 to preserve original voiceover volume.
     """
-    if not os.path.exists(BACKGROUND_MUSIC):
+    if not os.path.exists(music_path):
         subprocess.run(["cp", video_path, output_path])
         return True
 
@@ -499,7 +514,7 @@ def add_background_music(video_path: str, output_path: str, music_volume: float 
     cmd = [
         "ffmpeg", "-y",
         "-i", video_path,
-        "-i", BACKGROUND_MUSIC,
+        "-i", music_path,
         "-filter_complex", filter_complex,
         "-map", "0:v",
         "-map", "[aout]",
@@ -664,6 +679,8 @@ def main():
     with open(script_file) as f:
         script = json.load(f)
 
+    channel = load_channel_from_script(script)
+
     segments = script["segments"]
 
     # Check audio exists
@@ -685,7 +702,7 @@ def main():
 
     tasks = [
         (i, segment, f"{audio_dir}/segment_{i:02d}.mp3", footage_dir,
-         f"{temp_dir}/segment_{i:02d}.mp4", width, height, bitrate, encoder, encoder_flags, no_text)
+         f"{temp_dir}/segment_{i:02d}.mp4", width, height, bitrate, encoder, encoder_flags, no_text, channel)
         for i, segment in enumerate(segments)
     ]
 
@@ -732,14 +749,14 @@ def main():
     if not args.no_credits:
         print("\nCreating outro with credits...")
         outro_path = f"{temp_dir}/outro.mp4"
-        if create_outro_video(script, outro_path, width, height, bitrate, encoder, encoder_flags):
+        if create_outro_video(script, outro_path, width, height, bitrate, encoder, encoder_flags, channel):
             segment_videos.append(outro_path)
             outro_dur = get_duration(outro_path)
             print(f"Outro created successfully ({outro_dur:.1f}s)")
         else:
             print("Warning: Failed to create outro, falling back to legacy credits...")
             credits_path = f"{temp_dir}/credits.mp4"
-            if create_credits_video(script, credits_path, width, height, bitrate, encoder, encoder_flags):
+            if create_credits_video(script, credits_path, width, height, bitrate, encoder, encoder_flags, channel):
                 segment_videos.append(credits_path)
                 print("Legacy credits created")
 
@@ -776,7 +793,8 @@ def main():
     final_output = f"{output_dir}/final.mp4"
     if not args.no_music:
         print("Adding background music...")
-        add_background_music(concat_output, final_output)
+        background_music = channel_asset(channel, channel["background_music_longform"])
+        add_background_music(concat_output, final_output, background_music)
     else:
         subprocess.run(["cp", concat_output, final_output])
 

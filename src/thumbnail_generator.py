@@ -27,26 +27,17 @@ import re
 from typing import Dict, List, Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from src.config import get_project_dir, SHARED_DIR, F1_TEAM_COLORS
+from src.config import get_project_dir, SHARED_DIR
+from channels import channel_asset, load_channel_from_script
 
 # Thumbnail settings
 THUMBNAIL_WIDTH = 1280
 THUMBNAIL_HEIGHT = 720
 THUMBNAIL_QUALITY = 2  # JPEG quality (1-31, lower is better)
 
-# Font path
-F1_FONT = f"{SHARED_DIR}/fonts/Formula1-Bold.ttf"
-F1_FONT_REGULAR = f"{SHARED_DIR}/fonts/Formula1-Regular.ttf"
-
-# Viral thumbnail color schemes
-COLOR_SCHEMES = {
-    "ferrari": {"bg": "#E8002D", "text": "#FFFFFF", "accent": "#FFD700"},
-    "redbull": {"bg": "#1E41FF", "text": "#FFFFFF", "accent": "#FF0000"},
-    "mercedes": {"bg": "#00D2BE", "text": "#000000", "accent": "#FFFFFF"},
-    "mclaren": {"bg": "#FF8700", "text": "#000000", "accent": "#FFFFFF"},
+# Fallback thumbnail color schemes (used when channel has no thumbnail_schemes)
+_FALLBACK_SCHEMES = {
     "default": {"bg": "#E8002D", "text": "#FFFFFF", "accent": "#FFD700"},
-    "dramatic": {"bg": "#000000", "text": "#FFFFFF", "accent": "#E8002D"},
-    "gold": {"bg": "#1a1a1a", "text": "#FFD700", "accent": "#FFFFFF"},
 }
 
 # Viral words/phrases that increase CTR
@@ -64,8 +55,14 @@ def get_duration(file_path: str) -> float:
     return float(result.stdout.strip()) if result.stdout.strip() else 0
 
 
-def detect_team_colors(script: Dict) -> str:
-    """Detect dominant team/driver in script and return color scheme"""
+def detect_team_colors(script: Dict, channel: Dict) -> str:
+    """Detect dominant team/driver in script and return color scheme name.
+
+    Uses channel["thumbnail_schemes"] keys to determine which schemes are
+    available, then matches against script content.
+    """
+    schemes = channel.get("thumbnail_schemes", _FALLBACK_SCHEMES)
+
     full_text = " ".join([seg.get("text", "") for seg in script.get("segments", [])]).lower()
     title = script.get("title", "").lower()
     combined = f"{title} {full_text}"
@@ -79,6 +76,8 @@ def detect_team_colors(script: Dict) -> str:
 
     team_counts = {}
     for team, keywords in team_keywords.items():
+        if team not in schemes:
+            continue
         count = sum(combined.count(kw) for kw in keywords)
         if count > 0:
             team_counts[team] = count
@@ -187,7 +186,8 @@ def extract_best_frame(video_path: str, output_path: str,
 
 def add_text_overlay(input_path: str, output_path: str,
                      main_text: str, sub_text: str = "",
-                     color_scheme: str = "default") -> bool:
+                     color_scheme: str = "default",
+                     channel: Dict = None) -> bool:
     """Add bold text overlay to thumbnail image.
 
     Creates a viral-style thumbnail with:
@@ -196,7 +196,13 @@ def add_text_overlay(input_path: str, output_path: str,
     - Color gradient/overlay for contrast
     - Drop shadow for readability
     """
-    colors = COLOR_SCHEMES.get(color_scheme, COLOR_SCHEMES["default"])
+    if not channel:
+        from channels import load_channel
+        channel = load_channel()
+    schemes = channel.get("thumbnail_schemes", _FALLBACK_SCHEMES)
+    colors = schemes.get(color_scheme, schemes.get("default", list(schemes.values())[0]))
+    font_bold = channel_asset(channel, channel["font_bold"])
+    channel_name = channel["name_upper"]
 
     # Escape text for FFmpeg
     main_text = main_text.replace("'", "\u2019").replace(":", "\\:")
@@ -226,14 +232,14 @@ def add_text_overlay(input_path: str, output_path: str,
     # Main text - shadow first
     filters.append(
         f"drawtext=text='{main_text}':"
-        f"fontfile={F1_FONT}:fontsize={main_font_size}:"
+        f"fontfile={font_bold}:fontsize={main_font_size}:"
         f"fontcolor=black@0.8:x=(w-text_w)/2+4:y={main_y}+4"
     )
 
     # Main text - actual
     filters.append(
         f"drawtext=text='{main_text}':"
-        f"fontfile={F1_FONT}:fontsize={main_font_size}:"
+        f"fontfile={font_bold}:fontsize={main_font_size}:"
         f"fontcolor={colors['text']}:x=(w-text_w)/2:y={main_y}:"
         f"borderw=3:bordercolor={colors['bg']}"
     )
@@ -242,14 +248,14 @@ def add_text_overlay(input_path: str, output_path: str,
     if sub_text:
         filters.append(
             f"drawtext=text='{sub_text}':"
-            f"fontfile={F1_FONT}:fontsize={sub_font_size}:"
+            f"fontfile={font_bold}:fontsize={sub_font_size}:"
             f"fontcolor={colors['text']}@0.9:x=(w-text_w)/2:y={sub_y}"
         )
 
-    # Add small F1 BURNOUTS branding in corner
+    # Add small channel branding in corner
     filters.append(
-        f"drawtext=text='F1 BURNOUTS':"
-        f"fontfile={F1_FONT}:fontsize=24:"
+        f"drawtext=text='{channel_name}':"
+        f"fontfile={font_bold}:fontsize=24:"
         f"fontcolor=white@0.7:x=w-text_w-20:y=20"
     )
 
@@ -303,13 +309,15 @@ def generate_thumbnail(project_name: str, custom_text: str = None,
     with open(script_path) as f:
         script = json.load(f)
 
+    channel = load_channel_from_script(script)
+
     print("=" * 50)
     print(f"Thumbnail Generator - Project: {project_name}")
     print("=" * 50)
 
     # Detect color scheme from content
     if color_scheme is None:
-        color_scheme = detect_team_colors(script)
+        color_scheme = detect_team_colors(script, channel)
     print(f"Color scheme: {color_scheme}")
 
     # Generate text
@@ -330,7 +338,7 @@ def generate_thumbnail(project_name: str, custom_text: str = None,
 
     # Add text overlay
     print("Adding text overlay...")
-    if not add_text_overlay(temp_frame, output_path, main_text, sub_text, color_scheme):
+    if not add_text_overlay(temp_frame, output_path, main_text, sub_text, color_scheme, channel):
         print("Failed to add text overlay")
         # Clean up temp file
         if os.path.exists(temp_frame):
@@ -355,7 +363,7 @@ def main():
     parser = argparse.ArgumentParser(description="Generate viral thumbnail for F1 video")
     parser.add_argument("--project", required=True, help="Project name")
     parser.add_argument("--text", help="Custom thumbnail text (overrides auto-generation)")
-    parser.add_argument("--color", choices=list(COLOR_SCHEMES.keys()),
+    parser.add_argument("--color",
                         help="Color scheme (default: auto-detect from content)")
     parser.add_argument("--timestamp", type=float,
                         help="Specific timestamp to extract frame from (seconds)")

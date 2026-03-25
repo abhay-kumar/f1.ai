@@ -9,10 +9,10 @@ match the voiceover duration, scaled to the target resolution.
 import os
 import subprocess
 
-# Asset paths
+from channels import channel_asset, load_channel
+
+# Shared SFX (not channel-specific)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LOGO2_VIDEO = os.path.join(BASE_DIR, "shared", "assets", "logo", "logo2.mp4")
-INTRO_VOICEOVER = os.path.join(BASE_DIR, "shared", "audio", "intro_voiceover.mp3")
 ENGINE_REV_SFX = os.path.join(BASE_DIR, "shared", "sfx", "engine_rev.mp3")
 FPS = 30
 
@@ -30,23 +30,24 @@ def _get_duration(path: str) -> float:
         return 0.0
 
 
-def create_intro_video(output_path: str, width: int, height: int) -> bool:
-    """Create intro: logo2.mp4 sped up to match voiceover + engine rev SFX.
-
-    The full logo2.mp4 animation is shown sped up so its duration matches the
-    voiceover audio ("You are watching F1 Burnouts"). This ensures the complete
-    animation plays without cutting any frames.
+def create_intro_video(output_path: str, width: int, height: int, channel_id: str = None) -> bool:
+    """Create intro: logo video sped up to match voiceover + engine rev SFX.
 
     Args:
         output_path: Where to save the intro video
         width: Video width (e.g., 3840 for 4K)
         height: Video height (e.g., 2160 for 4K)
+        channel_id: Channel identifier (default: from ITI_CHANNEL env or "f1")
 
     Returns:
         True if intro was created successfully
     """
+    ch = load_channel(channel_id)
+    LOGO2_VIDEO = channel_asset(ch, ch["logo_video_2"])
+    INTRO_VOICEOVER = channel_asset(ch, ch["intro_voiceover"])
+
     if not os.path.exists(LOGO2_VIDEO):
-        print(f"    Logo2 video not found: {LOGO2_VIDEO}")
+        print(f"    Logo video not found: {LOGO2_VIDEO}")
         return False
 
     try:

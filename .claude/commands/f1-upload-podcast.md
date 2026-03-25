@@ -92,10 +92,10 @@ List each keyword on a separate line for easy copy-paste.
 Provide absolute paths:
 ```
 Audio file:
-/Users/abhaykumar/Documents/f1.ai/projects/{project}/output/final.mp3
+/Users/abhaykumar/Documents/iti.ai/projects/{project}/output/final.mp3
 
 Cover art:
-/Users/abhaykumar/Documents/f1.ai/projects/{project}/output/cover_art.jpg
+/Users/abhaykumar/Documents/iti.ai/projects/{project}/output/cover_art.jpg
 ```
 
 ---
@@ -170,10 +170,10 @@ McLaren
 ## Files to Upload
 
 Audio file:
-/Users/abhaykumar/Documents/f1.ai/projects/sustainable-fuels-podcast/output/final.mp3
+/Users/abhaykumar/Documents/iti.ai/projects/sustainable-fuels-podcast/output/final.mp3
 
 Cover art:
-/Users/abhaykumar/Documents/f1.ai/projects/sustainable-fuels-podcast/output/cover_art.jpg
+/Users/abhaykumar/Documents/iti.ai/projects/sustainable-fuels-podcast/output/cover_art.jpg
 ```
 
 ---
@@ -214,13 +214,13 @@ So here's the deal. From 2026, every single car on the grid will run on one hund
 Provide absolute paths for all three files:
 ```
 Audio file:
-/Users/abhaykumar/Documents/f1.ai/projects/{project}/output/final.mp3
+/Users/abhaykumar/Documents/iti.ai/projects/{project}/output/final.mp3
 
 Cover art:
-/Users/abhaykumar/Documents/f1.ai/projects/{project}/output/cover_art.jpg
+/Users/abhaykumar/Documents/iti.ai/projects/{project}/output/cover_art.jpg
 
 Transcript:
-/Users/abhaykumar/Documents/f1.ai/projects/{project}/output/transcript.vtt
+/Users/abhaykumar/Documents/iti.ai/projects/{project}/output/transcript.vtt
 ```
 
 ---

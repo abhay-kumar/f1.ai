@@ -156,7 +156,7 @@ Ken Burns: `zoom_in`, `zoom_out`, `pan_left`, `pan_right`, `zoom_pan_right` — 
     - **News/multi-story videos** (daily news, weekly roundups): Keep topic cards and lower thirds ON. Each segment covers a distinct story, and context fields should be actual headlines.
     - If a narrative video genuinely needs chapter labels, add an explicit `topic_label` field per segment instead of reusing internal `context` notes.
 
-    **Intro**: Uses `shared/assets/logo/logo2.mp4` (F1 car burnout + logo reveal), sped up to match voiceover duration, placed AFTER the cold_open segment so the hook plays first.
+    **Intro**: Uses `shared/channels/f1/assets/logo/logo2.mp4` (F1 car burnout + logo reveal), sped up to match voiceover duration, placed AFTER the cold_open segment so the hook plays first.
 
     **Footage quality rules:**
     - Use `source_type: image` for buildings, facilities, headquarters — YouTube clips for these return irrelevant results (tunnels, promos with burned-in text)
@@ -198,7 +198,7 @@ Final video: `projects/{name}/output/final.mp4`
 - Bitrate: 20Mbps (4K) / 12Mbps (HD)
 - Audio: Voiceover + subtle background music (5% volume or less)
 - **No burned-in captions** — generate separate `.srt` for YouTube CC
-- **Outro**: Reusable 19s outro at `shared/audio/outro_longform.mp3` (DO NOT regenerate)
+- **Outro**: Reusable 19s outro at `shared/channels/f1/audio/outro_longform.mp3` (DO NOT regenerate)
 
 ---
 
