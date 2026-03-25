@@ -169,8 +169,9 @@ from src.image_video_assembler import (
 )
 from src.config import (
     LONGFORM_AUDIO_BITRATE, MUSIC_VOLUME_LONGFORM,
-    MUSIC_VOLUME_UPLIFTING, MUSIC_VOLUME_ATMOSPHERIC, BACKGROUND_MUSIC,
+    MUSIC_VOLUME_UPLIFTING, MUSIC_VOLUME_ATMOSPHERIC,
 )
+from channels import channel_asset, load_channel_from_script
 import subprocess as sp
 
 segment_videos = info['segment_videos']

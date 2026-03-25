@@ -14,18 +14,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import SHARED_DIR, get_project_dir
+from channels import channel_asset, load_channel_from_script
 
-# Logo path
-LOGO_PATH = f"{SHARED_DIR}/assets/logo/logo.png"
-
-# Font paths - F1 official font for authentic look
-F1_FONT_PATH = f"{SHARED_DIR}/fonts/Formula1-Bold.ttf"
 FALLBACK_FONT = "Arial Bold"
 
 # Cover art settings
 COVER_SIZE = 3000  # Higher resolution for quality
-BACKGROUND_COLOR = "0x1a1a2e"  # Dark navy background
-ACCENT_COLOR = "0xff8000"  # F1 Burnouts orange
 
 # Text sizing - bigger and bolder
 EPISODE_FONT_SIZE = 180  # Large episode number
@@ -74,17 +68,28 @@ def generate_cover_art(
     if not output_path:
         output_path = f"{project_dir}/output/cover_art.jpg"
 
-    # Load script for title if not provided
-    if not title and os.path.exists(script_path):
+    # Load script for title and channel config
+    script = {}
+    if os.path.exists(script_path):
         with open(script_path) as f:
             script = json.load(f)
-            title = script.get("title", "F1 Burnouts Podcast")
-            # Clean up title
-            if title.lower().startswith("f1 burnouts:"):
-                title = title[12:].strip()
+            if not title:
+                title = script.get("title", "Podcast Episode")
+                # Clean up title prefix if it matches channel name
+                channel_name = load_channel_from_script(script).get("name", "")
+                prefix = f"{channel_name}:"
+                if title.lower().startswith(prefix.lower()):
+                    title = title[len(prefix):].strip()
 
+    channel = load_channel_from_script(script)
     if not title:
-        title = "F1 Burnouts Podcast"
+        show_name = channel.get("podcast", {}).get("show_name", "Podcast")
+        title = f"{show_name} Episode"
+
+    LOGO_PATH = channel_asset(channel, channel["logo"])
+    FONT_PATH = channel_asset(channel, channel["font_bold"])
+    BACKGROUND_COLOR = channel.get("cover_bg_color", "0x1a1a2e")
+    ACCENT_COLOR = channel.get("cover_accent_color", "0xff8000")
 
     # Wrap title into multiple lines instead of truncating
     title_lines = wrap_title(title)
@@ -104,12 +109,12 @@ def generate_cover_art(
     print(f"Generating cover art...")
     print(f"  Title lines: {title_lines}")
     print(f"  Episode: {ep_text}")
-    print(f"  Using F1 font: {os.path.exists(F1_FONT_PATH)}")
+    print(f"  Using channel font: {os.path.exists(FONT_PATH)}")
 
-    # Determine font to use - prefer F1 font if available
-    if os.path.exists(F1_FONT_PATH):
-        font_spec = f"fontfile='{F1_FONT_PATH}'"
-        print(f"  Font: Formula1-Bold")
+    # Determine font to use — prefer channel font if available
+    if os.path.exists(FONT_PATH):
+        font_spec = f"fontfile='{FONT_PATH}'"
+        print(f"  Font: {os.path.basename(FONT_PATH)}")
     else:
         font_spec = f"font='{FALLBACK_FONT}'"
         print(f"  Font: {FALLBACK_FONT} (fallback)")

@@ -27,6 +27,8 @@ shared/podcast_episodes.json
 shared/assets/**/*.mp4
 shared/assets/**/*.mov
 shared/assets/**/*.avi
+shared/channels/**/assets/**/*.mp4
+shared/channels/**/assets/**/*.mov
 
 # Node modules
 node_modules/

@@ -617,7 +617,9 @@ def create_quote_clip(
         gpu_flags = ["-allow_sw", "1"]
 
     if font_path is None:
-        font_path = "/Users/abhaykumar/Documents/f1.ai/shared/fonts/Formula1-Bold.ttf"
+        from channels import channel_asset, load_channel
+        ch = load_channel()
+        font_path = channel_asset(ch, ch["font_bold"])
 
     # Escape text for FFmpeg
     safe_quote = (

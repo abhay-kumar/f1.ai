@@ -29,11 +29,10 @@ from src.config import (
     SHARED_DIR,
     get_project_dir,
 )
+from channels import channel_asset, load_channel_from_script
 
-# Paths
-LOGO_PATH = f"{SHARED_DIR}/assets/logo/logo.png"
-F1_FONT_BOLD = f"{SHARED_DIR}/fonts/Formula1-Bold.ttf"
-F1_FONT_REGULAR = f"{SHARED_DIR}/fonts/TitilliumWeb-Black.ttf"
+# Active channel (set by generate_carousel, used by renderers)
+_active_channel = None
 
 # Lazy browser singleton (same pattern as google_image_search.py)
 _browser = None
@@ -84,19 +83,27 @@ def _cleanup_browser():
 # FONT EMBEDDING
 # ============================================================================
 
-_font_css_cache = None
+_font_css_cache = {}
 
 
-def _get_font_css():
+def _get_font_css(channel: dict = None):
     """Read fonts as base64 and return @font-face CSS rules."""
     global _font_css_cache
-    if _font_css_cache is not None:
-        return _font_css_cache
+    channel = channel or _active_channel
+    cache_key = channel["id"] if channel else "_default"
+    if cache_key in _font_css_cache:
+        return _font_css_cache[cache_key]
+
+    if not channel:
+        from channels import load_channel
+        channel = load_channel()
+    font_bold = channel_asset(channel, channel["font_bold"])
+    font_regular = channel_asset(channel, channel["font_regular"])
 
     rules = []
     for font_path, font_family in [
-        (F1_FONT_BOLD, "F1Bold"),
-        (F1_FONT_REGULAR, "F1Regular"),
+        (font_bold, "F1Bold"),
+        (font_regular, "F1Regular"),
     ]:
         if os.path.exists(font_path):
             with open(font_path, "rb") as f:
@@ -106,15 +113,15 @@ def _get_font_css():
                 f"src: url('data:font/truetype;base64,{b64}') format('truetype'); }}"
             )
 
-    _font_css_cache = "\n".join(rules)
-    return _font_css_cache
+    _font_css_cache[cache_key] = "\n".join(rules)
+    return _font_css_cache[cache_key]
 
 
 # ============================================================================
 # LOGO EMBEDDING
 # ============================================================================
 
-_logo_data_uri_cache = None
+_logo_data_uri_cache = {}
 
 
 def _image_to_data_uri(path: str) -> str:
@@ -139,126 +146,42 @@ def _image_to_data_uri(path: str) -> str:
         return ""
 
 
-def _get_logo_data_uri():
+def _get_logo_data_uri(channel: dict = None):
     """Read logo as base64 data URI."""
     global _logo_data_uri_cache
-    if _logo_data_uri_cache is not None:
-        return _logo_data_uri_cache
+    channel = channel or _active_channel
+    cache_key = channel["id"] if channel else "_default"
+    if cache_key in _logo_data_uri_cache:
+        return _logo_data_uri_cache[cache_key]
 
-    _logo_data_uri_cache = _image_to_data_uri(LOGO_PATH)
-    return _logo_data_uri_cache
+    if not channel:
+        from channels import load_channel
+        channel = load_channel()
+    logo_path = channel_asset(channel, channel["logo"])
+    _logo_data_uri_cache[cache_key] = _image_to_data_uri(logo_path)
+    return _logo_data_uri_cache[cache_key]
 
 
 # ============================================================================
 # THEME SYSTEM
 # ============================================================================
 
-THEMES = {
-    # F1 Teams
-    "ferrari": {
-        "primary": "#E8002D",
-        "secondary": "#A80020",
-        "bg": "#1a0005",
-        "text": "#FFFFFF",
-        "accent": "#FFD700",
-    },
-    "redbull": {
-        "primary": "#3671C6",
-        "secondary": "#1B3A6B",
-        "bg": "#0a1628",
-        "text": "#FFFFFF",
-        "accent": "#FF0000",
-    },
-    "mercedes": {
-        "primary": "#27F4D2",
-        "secondary": "#00A88F",
-        "bg": "#0a1a17",
-        "text": "#FFFFFF",
-        "accent": "#FFFFFF",
-    },
-    "mclaren": {
-        "primary": "#FF8000",
-        "secondary": "#CC6600",
-        "bg": "#1a1000",
-        "text": "#FFFFFF",
-        "accent": "#FFFFFF",
-    },
-    "aston_martin": {
-        "primary": "#229971",
-        "secondary": "#186B50",
-        "bg": "#0a1a14",
-        "text": "#FFFFFF",
-        "accent": "#CEF032",
-    },
-    "alpine": {
-        "primary": "#FF87BC",
-        "secondary": "#CC6B96",
-        "bg": "#1a0a12",
-        "text": "#FFFFFF",
-        "accent": "#0093CC",
-    },
-    "williams": {
-        "primary": "#64C4FF",
-        "secondary": "#3A96CC",
-        "bg": "#0a1520",
-        "text": "#FFFFFF",
-        "accent": "#FFFFFF",
-    },
-    "haas": {
-        "primary": "#B6BABD",
-        "secondary": "#8A8D8F",
-        "bg": "#141414",
-        "text": "#FFFFFF",
-        "accent": "#E8002D",
-    },
-    "cadillac": {
-        "primary": "#C4A747",
-        "secondary": "#8B7530",
-        "bg": "#141008",
-        "text": "#FFFFFF",
-        "accent": "#FFFFFF",
-    },
-    "audi": {
-        "primary": "#BB0A1E",
-        "secondary": "#8A0716",
-        "bg": "#1a0508",
-        "text": "#FFFFFF",
-        "accent": "#FFFFFF",
-    },
-    # Generic themes
+# Fallback themes (used when channel has no carousel_themes)
+_FALLBACK_THEMES = {
     "dramatic": {
-        "primary": "#E8002D",
-        "secondary": "#8B0000",
-        "bg": "#0a0a0a",
-        "text": "#FFFFFF",
-        "accent": "#FFD700",
-    },
-    "gold": {
-        "primary": "#FFD700",
-        "secondary": "#DAA520",
-        "bg": "#0f0f0f",
-        "text": "#FFFFFF",
-        "accent": "#FFD700",
-    },
-    "breaking": {
-        "primary": "#FF0000",
-        "secondary": "#CC0000",
-        "bg": "#1a0000",
-        "text": "#FFFFFF",
-        "accent": "#FFFF00",
-    },
-    "stats": {
-        "primary": "#00D4FF",
-        "secondary": "#0099CC",
-        "bg": "#0a0f1a",
-        "text": "#FFFFFF",
-        "accent": "#00D4FF",
+        "primary": "#E8002D", "secondary": "#8B0000",
+        "bg": "#0a0a0a", "text": "#FFFFFF", "accent": "#FFD700",
     },
 }
 
 
-def detect_theme(script: dict) -> str:
-    """Auto-detect theme from script content based on team/driver mentions."""
+def detect_theme(script: dict, channel: dict = None) -> str:
+    """Auto-detect theme from script content based on team/driver mentions.
+
+    Uses channel["carousel_themes"] keys to determine available themes.
+    """
+    themes = channel.get("carousel_themes", _FALLBACK_THEMES) if channel else _FALLBACK_THEMES
+
     full_text = " ".join(
         [
             s.get("headline", "") + " " + s.get("heading", "") + " " + s.get("body", "")
@@ -283,6 +206,8 @@ def detect_theme(script: dict) -> str:
 
     team_counts = {}
     for team, keywords in team_keywords.items():
+        if team not in themes:
+            continue
         count = sum(combined.count(kw) for kw in keywords)
         if count > 0:
             team_counts[team] = count
@@ -314,7 +239,7 @@ _STOPWORDS = {
 }
 
 
-def _derive_image_query(slide: dict, theme_name: str) -> str:
+def _derive_image_query(slide: dict, theme_name: str, channel: dict = None) -> str:
     """Derive a Google Images search query from slide content.
 
     Prefers explicit `image_query` field if set in the slide. Otherwise
@@ -352,17 +277,14 @@ def _derive_image_query(slide: dict, theme_name: str) -> str:
     # Add F1 context if theme is a team name and not already present
     f1_terms = {"f1", "formula", "racing", "motorsport", "grand", "prix"}
     has_f1 = any(w.lower() in f1_terms for w in query_words)
-    team_themes = {
-        "ferrari", "redbull", "mercedes", "mclaren", "aston_martin",
-        "alpine", "williams", "haas", "cadillac", "audi",
-    }
+    team_themes = channel.get("carousel_team_themes", set()) if channel else set()
     if theme_name in team_themes and not has_f1:
         query_words.append("F1")
 
     return " ".join(query_words)
 
 
-def _auto_source_images(project_dir: str, slides: list, theme_name: str) -> list:
+def _auto_source_images(project_dir: str, slides: list, theme_name: str, channel: dict = None) -> list:
     """Auto-source background images for slides that don't already have one.
 
     Downloads from Pexels (primary) with Google Images fallback.
@@ -399,7 +321,7 @@ def _auto_source_images(project_dir: str, slides: list, theme_name: str) -> list
 
         # --- Background image ---
         if not slide.get("background_image"):
-            query = _derive_image_query(slide, theme_name)
+            query = _derive_image_query(slide, theme_name, channel)
             if not query:
                 continue
 
@@ -901,9 +823,11 @@ def _render_content_image(slide: dict, theme: dict) -> str:
     </body></html>"""
 
 
-def _render_cta(theme: dict) -> str:
+def _render_cta(theme: dict, channel: dict = None) -> str:
     """Standard CTA slide - logo + follow prompt. Reusable across all carousels."""
-    logo_uri = _get_logo_data_uri()
+    logo_uri = _get_logo_data_uri(channel)
+    channel_name = channel["name"] if channel else "F1 Burnouts"
+    channel_handle = channel["handle"] if channel else "@f1burnouts"
 
     return f"""<!DOCTYPE html><html><head><style>
     {_base_css(theme)}
@@ -984,7 +908,7 @@ def _render_cta(theme: dict) -> str:
         <div class="corner-accent corner-tr"></div>
         <div class="corner-accent corner-bl"></div>
         <div class="corner-accent corner-br"></div>
-        <img class="logo" src="{logo_uri}" alt="F1 Burnouts" />
+        <img class="logo" src="{logo_uri}" alt="{channel_name}" />
         <div class="cta-text">Follow for more</div>
         <div class="actions">
             <div class="action">
@@ -1000,7 +924,7 @@ def _render_cta(theme: dict) -> str:
                 <div class="action-label">Follow</div>
             </div>
         </div>
-        <div class="handle">@f1burnouts</div>
+        <div class="handle">{channel_handle}</div>
     </div>
     </body></html>"""
 
@@ -1255,6 +1179,11 @@ def generate_carousel(
     with open(script_path) as f:
         script = json.load(f)
 
+    global _active_channel
+    channel = load_channel_from_script(script)
+    _active_channel = channel
+    themes = channel.get("carousel_themes", _FALLBACK_THEMES)
+
     if script.get("format") != "carousel":
         print(
             f"Error: Script format is '{script.get('format', 'unknown')}', expected 'carousel'"
@@ -1267,8 +1196,8 @@ def generate_carousel(
         return []
 
     # Theme
-    theme_name = theme_override or script.get("theme") or detect_theme(script)
-    theme = THEMES.get(theme_name, THEMES["dramatic"])
+    theme_name = theme_override or script.get("theme") or detect_theme(script, channel)
+    theme = themes.get(theme_name, themes.get("dramatic", list(themes.values())[0]))
     print(f"Theme: {theme_name}")
 
     # Resolve image paths (explicit URLs and local paths)
@@ -1278,7 +1207,7 @@ def generate_carousel(
     attributions = []
     if auto_source:
         print("\nAuto-sourcing images...")
-        attributions, cached = _auto_source_images(project_dir, slides, theme_name)
+        attributions, cached = _auto_source_images(project_dir, slides, theme_name, channel)
         parts = []
         if attributions:
             parts.append(f"sourced {len(attributions)} new")
@@ -1340,7 +1269,7 @@ def generate_carousel(
         cta_path = os.path.join(output_dir, f"slide_{cta_num:02d}.jpg")
         print(f"  Slide {cta_num}/{total_slides}: cta - Follow / Like / Share")
 
-        html = _render_cta(theme)
+        html = _render_cta(theme, channel)
         if render_slide(html, cta_path):
             size_kb = os.path.getsize(cta_path) / 1024
             print(f"    -> {cta_path} ({size_kb:.0f}KB)")
@@ -1374,8 +1303,9 @@ def list_slides(project_name: str):
     with open(script_path) as f:
         script = json.load(f)
 
+    channel = load_channel_from_script(script)
     slides = script.get("slides", [])
-    theme_name = script.get("theme") or detect_theme(script)
+    theme_name = script.get("theme") or detect_theme(script, channel)
 
     print(f"Project: {project_name}")
     print(f"Title: {script.get('title', 'Untitled')}")
@@ -1402,7 +1332,6 @@ def main():
     parser.add_argument("--project", required=True, help="Project name")
     parser.add_argument(
         "--theme",
-        choices=list(THEMES.keys()),
         help="Override theme (default: auto-detect)",
     )
     parser.add_argument(

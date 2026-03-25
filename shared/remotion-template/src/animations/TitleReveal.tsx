@@ -7,7 +7,11 @@ import {
   useVideoConfig,
 } from "remotion";
 
-export const TitleReveal: React.FC = () => {
+interface TitleRevealProps {
+  channelName?: string;
+}
+
+export const TitleReveal: React.FC<TitleRevealProps> = ({ channelName = "F1 BURNOUTS" }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
@@ -73,7 +77,7 @@ export const TitleReveal: React.FC = () => {
 
       {/* Main title block */}
       <div style={{ textAlign: "center", position: "relative" }}>
-        {/* F1 BURNOUTS badge */}
+        {/* Channel name badge */}
         <div
           style={{
             fontFamily: "'JetBrains Mono', monospace",
@@ -85,7 +89,7 @@ export const TitleReveal: React.FC = () => {
             marginBottom: 20,
           }}
         >
-          F1 BURNOUTS
+          {channelName}
         </div>
 
         {/* Accent line */}

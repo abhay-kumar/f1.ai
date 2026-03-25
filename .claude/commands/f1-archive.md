@@ -96,7 +96,7 @@ python3 src/gdrive_uploader.py projects/{name1} projects/{name2} --delete
 
 The script will:
 - Authenticate with Google Drive (browser popup on first run)
-- Find or create the `f1.ai` folder in Google Drive
+- Find or create the `iti.ai` folder in Google Drive
 - Create a subfolder for each project, mirroring the local structure
 - Upload all files within each project folder
 - Delete local project folders after successful upload

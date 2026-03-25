@@ -11,12 +11,14 @@ interface LowerThirdProps {
   title: string;
   teamColor: string;
   duration: number;
+  channelName?: string;
 }
 
 export const LowerThird: React.FC<LowerThirdProps> = ({
   title = "STORY TITLE",
   teamColor = "#E10600",
   duration = 3.5,
+  channelName = "F1 BURNOUTS",
 }) => {
   const frame = useCurrentFrame();
   const { fps, width, height } = useVideoConfig();
@@ -182,7 +184,7 @@ export const LowerThird: React.FC<LowerThirdProps> = ({
             opacity: interpolate(brandSpring, [0, 1], [0, 0.9]),
           }}
         >
-          F1 BURNOUTS
+          {channelName}
         </div>
       </div>
     </AbsoluteFill>

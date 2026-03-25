@@ -37,12 +37,10 @@ from typing import Dict, List, Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.color_grader import apply_color_grade, detect_color_grade
+from channels import channel_asset, load_channel, load_channel_from_script
 from src.config import (
-    BACKGROUND_MUSIC_LONGFORM,
     BASE_DIR,
     CREDITS_DURATION_LONGFORM,
-    F1_DEFAULT_COLOR,
-    F1_TEAM_COLORS,
     LONGFORM_AUDIO_BITRATE,
     LONGFORM_FRAME_RATE,
     LONGFORM_OUTPUT_HEIGHT_4K,
@@ -58,7 +56,6 @@ from src.config import (
     MUSIC_VOLUME_ATMOSPHERIC,
     MUSIC_VOLUME_LONGFORM,
     MUSIC_VOLUME_UPLIFTING,
-    OUTRO_AUDIO_LONGFORM,
     REMOTION_PROJECT_DIR,
     TOPIC_CARD_DURATION,
     get_project_dir,
@@ -124,9 +121,12 @@ def gpu_enc_args() -> list:
 # Ken Burns effects
 KEN_BURNS_EFFECTS = ["zoom_in", "zoom_out", "pan_left", "pan_right"]
 
-# Font paths
-F1_FONT_BOLD = os.path.join(BASE_DIR, "shared/fonts/Formula1-Bold.ttf")
-F1_FONT_REGULAR = os.path.join(BASE_DIR, "shared/fonts/Formula1-Regular.ttf")
+# Font path helpers (resolved from channel config)
+def _font_bold(channel: dict) -> str:
+    return channel_asset(channel, channel["font_bold"])
+
+def _font_regular(channel: dict) -> str:
+    return channel_asset(channel, channel["font_regular"])
 
 # Skip keywords for lower-third detection (segments that should NOT get overlays)
 _SKIP_LOWER_THIRD_KEYWORDS = {"logo", "brand moment", "outro", "cta", "intro"}
@@ -145,13 +145,15 @@ def escape_text_for_ffmpeg(text: str) -> str:
     return text
 
 
-def get_team_color(text: str) -> str:
-    """Detect team/driver mentions and return appropriate F1 team color."""
+def get_team_color(text: str, channel: dict = None) -> str:
+    """Detect team/driver mentions and return appropriate team color."""
+    if channel is None:
+        channel = load_channel()
     text_lower = text.lower()
-    for keyword, color in F1_TEAM_COLORS.items():
+    for keyword, color in channel["entity_colors"].items():
         if keyword in text_lower:
             return color
-    return F1_DEFAULT_COLOR
+    return channel["default_text_color"]
 
 
 def get_lower_third_title(segment: Dict) -> Optional[str]:
@@ -246,8 +248,11 @@ def _apply_lower_third_ffmpeg(
     team_color: str,
     width: int,
     height: int,
+    channel: dict = None,
 ) -> bool:
     """FFmpeg fallback: flat drawbox+drawtext lower-third overlay."""
+    if channel is None:
+        channel = load_channel()
     escaped_title = escape_text_for_ffmpeg(title)
     is_4k = width >= 3840
     scale = 2 if is_4k else 1
@@ -268,17 +273,21 @@ def _apply_lower_third_ffmpeg(
     end = delay + LOWER_THIRD_DURATION
     enable = f"between(t,{delay},{end})"
 
+    font_bold = _font_bold(channel)
+    font_regular = _font_regular(channel)
+    brand_name = channel["name_upper"]
+
     vf = (
         f"drawbox=x={bar_x}:y={bar_y}:w={bar_w}:h={bar_h}"
         f":color=black@0.65:t=fill:enable='{enable}',"
         f"drawbox=x={bar_x}:y={bar_y}:w={accent_w}:h={bar_h}"
         f":color={team_color}:t=fill:enable='{enable}',"
         f"drawtext=text='{escaped_title}'"
-        f":fontfile={F1_FONT_BOLD}:fontsize={title_sz}"
+        f":fontfile={font_bold}:fontsize={title_sz}"
         f":fontcolor=white:x={text_x}:y={title_y}"
         f":enable='{enable}',"
-        f"drawtext=text='F1 BURNOUTS'"
-        f":fontfile={F1_FONT_REGULAR}:fontsize={brand_sz}"
+        f"drawtext=text='{brand_name}'"
+        f":fontfile={font_regular}:fontsize={brand_sz}"
         f":fontcolor={team_color}:x={text_x}:y={brand_y}"
         f":enable='{enable}'"
     )
@@ -306,6 +315,7 @@ def apply_lower_third(
     team_color: str,
     width: int,
     height: int,
+    channel: dict = None,
 ) -> bool:
     """Overlay an animated lower-third on a segment video using Remotion.
 
@@ -352,7 +362,7 @@ def apply_lower_third(
     if os.path.exists(overlay_path):
         os.remove(overlay_path)
     return _apply_lower_third_ffmpeg(
-        input_path, output_path, title, team_color, width, height
+        input_path, output_path, title, team_color, width, height, channel=channel
     )
 
 
@@ -363,8 +373,11 @@ def _create_topic_card_ffmpeg(
     width: int,
     height: int,
     duration: float = TOPIC_CARD_DURATION,
+    channel: dict = None,
 ) -> bool:
     """FFmpeg fallback: static dark card with centered text and accent lines."""
+    if channel is None:
+        channel = load_channel()
     escaped_title = escape_text_for_ffmpeg(title)
     is_4k = width >= 3840
     title_sz = 52 if is_4k else 32
@@ -374,11 +387,13 @@ def _create_topic_card_ffmpeg(
     line_y_top = f"(h/2-{50 if not is_4k else 80})"
     line_y_bot = f"(h/2+{35 if not is_4k else 55})"
 
+    font_bold = _font_bold(channel)
+
     vf = (
         f"drawbox=x={line_x}:y={line_y_top}:w={line_w}:h={line_h}"
         f":color={team_color}:t=fill,"
         f"drawtext=text='{escaped_title}'"
-        f":fontfile={F1_FONT_BOLD}:fontsize={title_sz}"
+        f":fontfile={font_bold}:fontsize={title_sz}"
         f":fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2,"
         f"drawbox=x={line_x}:y={line_y_bot}:w={line_w}:h={line_h}"
         f":color={team_color}:t=fill"
@@ -418,6 +433,7 @@ def create_topic_card(
     width: int,
     height: int,
     duration: float = TOPIC_CARD_DURATION,
+    channel: dict = None,
 ) -> bool:
     """Generate an animated topic transition card using Remotion.
 
@@ -496,7 +512,7 @@ def create_topic_card(
     if os.path.exists(raw_path):
         os.remove(raw_path)
     return _create_topic_card_ffmpeg(
-        output_path, title, team_color, width, height, duration
+        output_path, title, team_color, width, height, duration, channel=channel
     )
 
 
@@ -523,110 +539,6 @@ class VisualDecision:
     confidence: float = 0.8
 
 
-# ============================================================================
-# F1 KNOWLEDGE BASE
-# ============================================================================
-
-F1_DRIVERS = {
-    "verstappen": "Max Verstappen",
-    "hamilton": "Lewis Hamilton",
-    "leclerc": "Charles Leclerc",
-    "norris": "Lando Norris",
-    "sainz": "Carlos Sainz",
-    "russell": "George Russell",
-    "perez": "Sergio Perez",
-    "alonso": "Fernando Alonso",
-    "stroll": "Lance Stroll",
-    "ocon": "Esteban Ocon",
-    "gasly": "Pierre Gasly",
-    "tsunoda": "Yuki Tsunoda",
-    "ricciardo": "Daniel Ricciardo",
-    "bottas": "Valtteri Bottas",
-    "piastri": "Oscar Piastri",
-    "lawson": "Liam Lawson",
-    "antonelli": "Kimi Antonelli",
-    "bearman": "Oliver Bearman",
-    "schumacher": "Michael Schumacher",
-    "senna": "Ayrton Senna",
-    "vettel": "Sebastian Vettel",
-    "raikkonen": "Kimi Raikkonen",
-    "wolff": "Toto Wolff",
-    "horner": "Christian Horner",
-    "binotto": "Mattia Binotto",
-    "brown": "Zak Brown",
-    "newey": "Adrian Newey",
-    "brawn": "Ross Brawn",
-}
-
-F1_TEAMS = {
-    "red bull": "Red Bull Racing",
-    "mercedes": "Mercedes F1",
-    "ferrari": "Scuderia Ferrari",
-    "mclaren": "McLaren F1",
-    "aston martin": "Aston Martin F1",
-    "alpine": "Alpine F1",
-    "williams": "Williams Racing",
-    "haas": "Haas F1",
-    "sauber": "Sauber F1",
-    "rb": "RB F1 Team",
-}
-
-FUEL_PARTNERS = {
-    "aramco": "Saudi Aramco",
-    "shell": "Shell",
-    "petronas": "Petronas",
-    "mobil": "ExxonMobil",
-    "castrol": "Castrol",
-    "bp": "BP",
-    "gulf": "Gulf Oil",
-}
-
-CONCEPT_KEYWORDS = [
-    "how",
-    "why",
-    "explain",
-    "concept",
-    "basically",
-    "essentially",
-    "fundamentally",
-    "process",
-    "mechanism",
-    "chemistry",
-    "physics",
-    "engineering",
-    "fischer-tropsch",
-    "syngas",
-    "catalyst",
-    "molecule",
-    "carbon capture",
-    "efficiency",
-    "thermal",
-    "combustion",
-    "compression ratio",
-    "power unit",
-    "mgu-h",
-    "mgu-k",
-    "hybrid",
-]
-
-ACTION_KEYWORDS = [
-    "race",
-    "racing",
-    "overtake",
-    "crash",
-    "pit stop",
-    "start",
-    "finish",
-    "podium",
-    "celebration",
-    "onboard",
-    "battle",
-    "wheel to wheel",
-    "championship",
-    "victory",
-    "dramatic",
-]
-
 # Keywords that suggest Veo3 AI video would be ideal (abstract/cinematic concepts)
 VEO3_KEYWORDS = [
     "future",
@@ -650,18 +562,6 @@ VEO3_KEYWORDS = [
     "aerodynamic",
     "simulation",
 ]
-
-# Veo3 prompt templates for common F1 scenarios
-VEO3_PROMPTS = {
-    "fuel_production": "Industrial fuel production facility with advanced chemistry equipment, glowing reactors, sustainable energy, futuristic laboratory",
-    "carbon_capture": "Carbon capture technology visualization, CO2 molecules being absorbed, green industrial facility, environmental technology",
-    "engine_tech": "Formula 1 power unit internal visualization, turbo spinning, energy flow through MGU-K, high-tech engineering",
-    "wind_tunnel": "F1 car in wind tunnel, smoke particles flowing over aerodynamic bodywork, technical testing facility",
-    "chemistry": "Chemical synthesis process visualization, molecular bonds forming, laboratory equipment, scientific innovation",
-    "factory": "High-tech F1 factory floor, carbon fiber components being manufactured, robotic precision, clean room environment",
-    "data_analysis": "F1 data analysis visualization, telemetry streams, holographic displays, race strategy simulation",
-    "sustainable": "Sustainable energy technology, green fuel production, environmental innovation, clean energy future",
-}
 
 # ============================================================================
 # GLOBAL CACHES
@@ -728,8 +628,10 @@ def download_file(url: str, output_path: str, timeout: int = 30) -> bool:
 # ============================================================================
 
 
-def detect_quote(text: str) -> Tuple[Optional[str], Optional[str]]:
+def detect_quote(text: str, channel: dict = None) -> Tuple[Optional[str], Optional[str]]:
     """Detect if text contains a quote and extract speaker name."""
+    if channel is None:
+        channel = load_channel()
     speaker = None
     quote = None
 
@@ -752,10 +654,10 @@ def detect_quote(text: str) -> Tuple[Optional[str], Optional[str]]:
             speaker = match.group(1)
             break
 
-    # Check for known F1 figures
+    # Check for known people
     if not speaker:
         text_lower = text.lower()
-        for key, name in F1_DRIVERS.items():
+        for key, name in channel["known_people"].items():
             if key in text_lower and any(
                 w in text_lower for w in ["said", "stated", "explained", "according"]
             ):
@@ -765,87 +667,95 @@ def detect_quote(text: str) -> Tuple[Optional[str], Optional[str]]:
     return speaker, quote
 
 
-def detect_f1_entities(text: str) -> Dict[str, List[str]]:
-    """Detect F1-related entities in text."""
+def detect_entities(text: str, channel: dict = None) -> Dict[str, List[str]]:
+    """Detect channel-related entities in text."""
+    if channel is None:
+        channel = load_channel()
     text_lower = text.lower()
     entities = {"drivers": [], "teams": [], "fuel_partners": []}
 
-    for key, name in F1_DRIVERS.items():
+    for key, name in channel["known_people"].items():
         if key in text_lower:
             entities["drivers"].append(name)
 
-    for key, name in F1_TEAMS.items():
+    for key, name in channel["known_teams"].items():
         if key in text_lower:
             entities["teams"].append(name)
 
-    for key, name in FUEL_PARTNERS.items():
+    for key, name in channel["known_partners"].items():
         if key in text_lower:
             entities["fuel_partners"].append(name)
 
     return entities
 
 
-def get_veo3_prompt(text: str, context: str) -> Optional[str]:
+def get_veo3_prompt(text: str, context: str, channel: dict = None) -> Optional[str]:
     """Generate an appropriate Veo3 prompt based on content."""
+    if channel is None:
+        channel = load_channel()
     text_lower = f"{text} {context}".lower()
+    veo3_prompts = channel.get("veo3_prompts", {})
 
     # Check for matching templates
     if any(
         kw in text_lower
         for kw in ["fuel production", "sustainable fuel", "synthetic fuel"]
     ):
-        return VEO3_PROMPTS["fuel_production"]
+        return veo3_prompts.get("fuel_production")
     if any(kw in text_lower for kw in ["carbon capture", "co2", "carbon dioxide"]):
-        return VEO3_PROMPTS["carbon_capture"]
+        return veo3_prompts.get("carbon_capture")
     if any(kw in text_lower for kw in ["power unit", "engine", "mgu", "turbo"]):
-        return VEO3_PROMPTS["engine_tech"]
+        return veo3_prompts.get("engine_tech")
     if any(kw in text_lower for kw in ["wind tunnel", "aerodynamic", "downforce"]):
-        return VEO3_PROMPTS["wind_tunnel"]
+        return veo3_prompts.get("wind_tunnel")
     if any(
         kw in text_lower
         for kw in ["chemistry", "chemical", "molecule", "synthesis", "fischer-tropsch"]
     ):
-        return VEO3_PROMPTS["chemistry"]
+        return veo3_prompts.get("chemistry")
     if any(kw in text_lower for kw in ["factory", "manufacturing", "production"]):
-        return VEO3_PROMPTS["factory"]
+        return veo3_prompts.get("factory")
     if any(kw in text_lower for kw in ["data", "telemetry", "analysis", "strategy"]):
-        return VEO3_PROMPTS["data_analysis"]
+        return veo3_prompts.get("data_analysis")
     if any(
         kw in text_lower for kw in ["sustainable", "green", "environment", "future"]
     ):
-        return VEO3_PROMPTS["sustainable"]
+        return veo3_prompts.get("sustainable")
 
     return None
 
 
-def route_visual(segment: Dict, use_veo3: bool = True) -> VisualDecision:
+def route_visual(segment: Dict, use_veo3: bool = True, channel: dict = None) -> VisualDecision:
     """Determine the best visual type for a segment.
 
     YouTube-first approach: most segments use YouTube clips as primary source.
     F1 images (Pexels/Unsplash) serve as fallback when YouTube clips aren't found.
     """
+    if channel is None:
+        channel = load_channel()
     text = segment.get("text", "")
     context = segment.get("context", "")
     footage_query = segment.get("footage_query", "")
     image_query = segment.get("image_query", "")
+    search_context = channel.get("search_context", "")
 
     combined_text = f"{text} {context} {footage_query}"
     text_lower = combined_text.lower()
 
     # Check for quotes first
-    speaker, quote = detect_quote(text)
+    speaker, quote = detect_quote(text, channel=channel)
     if speaker and quote:
         return VisualDecision(
             primary_type=VisualType.QUOTE_OVERLAY,
             fallback_type=VisualType.F1_IMAGE,
-            search_queries=[f"{speaker} F1", f"{speaker} portrait"],
+            search_queries=[f"{speaker} {search_context}", f"{speaker} portrait"],
             speaker_name=speaker,
             quote_text=quote,
             confidence=0.95,
         )
 
-    # Detect F1 entities
-    entities = detect_f1_entities(combined_text)
+    # Detect entities
+    entities = detect_entities(combined_text, channel=channel)
 
     # Build search queries — prefer footage_query, then image_query
     search_queries = []
@@ -855,23 +765,23 @@ def route_visual(segment: Dict, use_veo3: bool = True) -> VisualDecision:
         search_queries.append(image_query)
 
     for driver in entities["drivers"][:2]:
-        search_queries.append(f"{driver} F1 2024")
+        search_queries.append(f"{driver} {search_context}")
     for team in entities["teams"][:2]:
-        search_queries.append(f"{team} F1 car")
+        search_queries.append(f"{team} {search_context}")
     for partner in entities["fuel_partners"][:1]:
-        search_queries.append(f"{partner} F1")
+        search_queries.append(f"{partner} {search_context}")
 
     is_veo3_suitable = any(kw in text_lower for kw in VEO3_KEYWORDS)
     has_f1_content = any(entities[k] for k in entities)
 
     # Check for Veo3-suitable content (abstract concepts, visualizations)
     if use_veo3 and is_veo3_suitable and not has_f1_content:
-        veo3_prompt = get_veo3_prompt(text, context)
+        veo3_prompt = get_veo3_prompt(text, context, channel=channel)
         if veo3_prompt:
             return VisualDecision(
                 primary_type=VisualType.VEO3_VIDEO,
                 fallback_type=VisualType.F1_IMAGE,
-                search_queries=search_queries or ["F1 technology"],
+                search_queries=search_queries or [f"{search_context} technology"],
                 veo3_prompt=veo3_prompt,
                 confidence=0.85,
             )
@@ -881,7 +791,7 @@ def route_visual(segment: Dict, use_veo3: bool = True) -> VisualDecision:
         primary_type=VisualType.YOUTUBE_CLIP,
         fallback_type=VisualType.F1_IMAGE,
         search_queries=search_queries
-        or [f"F1 {context}" if context else "Formula 1 racing"],
+        or [f"{search_context} {context}" if context else f"{search_context} racing"],
         confidence=0.8,
     )
 
@@ -1137,8 +1047,11 @@ def create_quote_overlay_clip(
     work_dir: str,
     width: int,
     height: int,
+    channel: dict = None,
 ) -> bool:
     """Create a clip showing a quote with speaker's image."""
+    if channel is None:
+        channel = load_channel()
     duration = get_duration(audio_path)
     if duration <= 0:
         return False
@@ -1153,8 +1066,8 @@ def create_quote_overlay_clip(
     )
 
     fps = LONGFORM_FRAME_RATE
-    f1_font = "/Users/abhaykumar/Documents/f1.ai/shared/fonts/Formula1-Bold.ttf"
-    regular_font = "/Users/abhaykumar/Documents/f1.ai/shared/fonts/Formula1-Regular.ttf"
+    f1_font = _font_bold(channel)
+    regular_font = _font_regular(channel)
 
     # Font sizes based on resolution
     if width >= 3840:
@@ -1497,6 +1410,7 @@ def create_segment_video(
     height: int,
     use_veo3: bool = False,
     use_yt_search: bool = True,
+    channel: dict = None,
 ) -> Tuple[bool, str, str]:
     """
     Create a segment video by intelligently blending visual sources.
@@ -1509,6 +1423,8 @@ def create_segment_video(
 
     Returns: (success, error_message, visual_type_used)
     """
+    if channel is None:
+        channel = load_channel()
     audio_duration = get_duration(audio_path)
     if audio_duration <= 0:
         return False, "Invalid audio duration", ""
@@ -1580,7 +1496,7 @@ def create_segment_video(
         print(f"      Multi-shot failed, falling back to auto-routing...")
 
     # Get visual routing decision (single-shot / legacy path)
-    decision = route_visual(segment, use_veo3=use_veo3)
+    decision = route_visual(segment, use_veo3=use_veo3, channel=channel)
     visual_type_used = decision.primary_type.value
 
     # Handle quote overlays
@@ -1599,6 +1515,7 @@ def create_segment_video(
             segment_work_dir,
             width,
             height,
+            channel=channel,
         )
         if success:
             return True, "", "quote_overlay"
@@ -1978,13 +1895,18 @@ def add_transition_sfx(
 # ============================================================================
 
 
-def create_outro_video(output_path: str, width: int, height: int) -> bool:
+def create_outro_video(output_path: str, width: int, height: int, channel: dict = None) -> bool:
     """Create outro video with credits."""
-    if not os.path.exists(OUTRO_AUDIO_LONGFORM):
+    if channel is None:
+        channel = load_channel()
+    outro_audio = channel_asset(channel, channel.get("outro_audio", "audio/outro_longform.mp3"))
+    if not os.path.exists(outro_audio):
         return False
 
-    outro_duration = get_duration(OUTRO_AUDIO_LONGFORM)
-    f1_font = "/Users/abhaykumar/Documents/f1.ai/shared/fonts/Formula1-Bold.ttf"
+    outro_duration = get_duration(outro_audio)
+    f1_font = _font_bold(channel)
+    brand_name = channel["name_upper"]
+    brand_color = channel.get("brand_color", "#E8002D")
 
     if width >= 3840:
         title_size, channel_size, cta_size = 72, 96, 48
@@ -2001,9 +1923,9 @@ def create_outro_video(output_path: str, width: int, height: int) -> bool:
         f"fontfile={f1_font}:fontsize={title_size}:"
         f"fontcolor=white:x=(w-text_w)/2:y={center_y}:"
         f"enable='lt(t,{CREDITS_DURATION_LONGFORM})',"
-        f"drawtext=text='F1 BURNOUTS':"
+        f"drawtext=text='{brand_name}':"
         f"fontfile={f1_font}:fontsize={channel_size}:"
-        f"fontcolor=#E8002D:x=(w-text_w)/2:y={center_y}:"
+        f"fontcolor={brand_color}:x=(w-text_w)/2:y={center_y}:"
         f"enable='gte(t,{CREDITS_DURATION_LONGFORM})',"
         f"drawtext=text='LIKE • SUBSCRIBE • BELL':"
         f"fontfile={f1_font}:fontsize={cta_size}:"
@@ -2019,7 +1941,7 @@ def create_outro_video(output_path: str, width: int, height: int) -> bool:
         "-i",
         f"color=black:s={width}x{height}:d={outro_duration}:r={LONGFORM_FRAME_RATE}",
         "-i",
-        OUTRO_AUDIO_LONGFORM,
+        outro_audio,
         "-filter_complex",
         filter_complex,
         "-map",
@@ -2100,6 +2022,7 @@ def add_background_music(
     output_path: str,
     music_volume: float = MUSIC_VOLUME_LONGFORM,
     segment_volumes: Optional[List[Tuple[float, float, float]]] = None,
+    channel: dict = None,
 ) -> bool:
     """Mix background music under video audio with dynamic volume.
 
@@ -2108,8 +2031,12 @@ def add_background_music(
         output_path: Output with music
         music_volume: Base volume (used if no segment_volumes)
         segment_volumes: List of (start_time, end_time, volume) for per-segment volume
+        channel: Channel config dict
     """
-    if not os.path.exists(BACKGROUND_MUSIC_LONGFORM):
+    if channel is None:
+        channel = load_channel()
+    bg_music = channel_asset(channel, channel.get("background_music_longform", "music/f1_cinematic_rock.mp3"))
+    if not os.path.exists(bg_music):
         subprocess.run(["cp", video_path, output_path])
         return True
 
@@ -2147,7 +2074,7 @@ def add_background_music(
         "-i",
         video_path,
         "-i",
-        BACKGROUND_MUSIC_LONGFORM,
+        bg_music,
         "-filter_complex",
         filter_complex,
         "-map",
@@ -2332,6 +2259,7 @@ def main():
     with open(script_file) as f:
         script = json.load(f)
 
+    channel = load_channel_from_script(script)
     segments = script["segments"]
 
     # Check Veo3 availability if enabled
@@ -2356,7 +2284,7 @@ def main():
 
         type_counts = {}
         for i, seg in enumerate(segments):
-            decision = route_visual(seg, use_veo3=args.veo3)
+            decision = route_visual(seg, use_veo3=args.veo3, channel=channel)
             vtype = decision.primary_type.value
             type_counts[vtype] = type_counts.get(vtype, 0) + 1
 
@@ -2430,6 +2358,7 @@ def main():
             height,
             use_veo3=args.veo3,
             use_yt_search=not args.no_yt_search,
+            channel=channel,
         )
 
         if success:
@@ -2446,11 +2375,12 @@ def main():
                 lt_title = get_lower_third_title(segment)
                 if lt_title:
                     tc = get_team_color(
-                        segment.get("text", "") + " " + segment.get("context", "")
+                        segment.get("text", "") + " " + segment.get("context", ""),
+                        channel=channel,
                     )
                     lt_path = f"{temp_dir}/segment_{i:02d}_lt.mp4"
                     if apply_lower_third(
-                        output_path, lt_path, lt_title, tc, width, height
+                        output_path, lt_path, lt_title, tc, width, height, channel=channel
                     ):
                         os.replace(lt_path, output_path)
                         lt_label = " +lt"
@@ -2495,7 +2425,7 @@ def main():
     if not args.no_credits and not has_cta_segment:
         print("\nCreating outro...")
         outro_path = f"{temp_dir}/outro.mp4"
-        if create_outro_video(outro_path, width, height):
+        if create_outro_video(outro_path, width, height, channel=channel):
             segment_videos.append(outro_path)
     elif has_cta_segment:
         print("\nSkipping credits outro (CTA segment already provides outro)")
@@ -2511,10 +2441,11 @@ def main():
             lt_title = get_lower_third_title(segment)
             if lt_title:
                 tc = get_team_color(
-                    segment.get("text", "") + " " + segment.get("context", "")
+                    segment.get("text", "") + " " + segment.get("context", ""),
+                    channel=channel,
                 )
                 card_path = f"{temp_dir}/topic_card_{i:02d}.mp4"
-                if create_topic_card(card_path, lt_title, tc, width, height):
+                if create_topic_card(card_path, lt_title, tc, width, height, channel=channel):
                     insert_idx = i + intro_offset + cards_inserted
                     segment_videos.insert(insert_idx, card_path)
                     segment_durations.insert(insert_idx, TOPIC_CARD_DURATION)
@@ -2622,7 +2553,8 @@ def main():
             cumulative += dur
 
         add_background_music(
-            concat_output, final_output, segment_volumes=segment_volumes
+            concat_output, final_output, segment_volumes=segment_volumes,
+            channel=channel,
         )
     else:
         subprocess.run(["cp", concat_output, final_output])

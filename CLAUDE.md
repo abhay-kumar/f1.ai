@@ -4,7 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-F1.ai is an automated pipeline for creating F1-themed content. It supports five formats:
+iti.ai is a multi-channel automated pipeline for creating content across YouTube channels. Each channel has its own branding, themes, knowledge base, and credentials. The pipeline infrastructure is shared; channel-specific data lives in `channels/<id>.py`.
+
+**Active channels:**
+- **f1** — F1 Burnouts (Formula 1 content)
+- **history** — (planned)
+- **science** — (planned)
+- **food** — (planned)
+
+It supports five content formats:
 
 1. **Shorts** (60-second vertical videos, 9:16) - Quick, engaging content for mobile
 2. **Long-form** (4-6 minute horizontal videos, 16:9, up to 4K) - In-depth story-driven content with references
@@ -19,6 +27,55 @@ F1.ai is an automated pipeline for creating F1-themed content. It supports five 
 **Podcast format** orchestrates: script creation → single-request TTS generation (Gemini) → music mixing (intro/outro) → RSS.com upload.
 
 **Carousel format** orchestrates: content sourcing (Reddit/web/text) → script creation → image sourcing → HTML/CSS slide rendering (Playwright) → manual Instagram upload.
+
+## Multi-Channel Architecture
+
+### Channel Config System (`channels/`)
+
+Each channel has a Python config file exporting a `CHANNEL` dict with all channel-specific data:
+
+```
+channels/
+  __init__.py      # load_channel(), channel_asset(), channel_cred() helpers
+  f1.py            # F1 Burnouts — colors, entities, themes, knowledge base, upload metadata
+  history.py       # (planned)
+  science.py       # (planned)
+  food.py          # (planned)
+```
+
+**Channel resolution order:**
+1. `script.json["channel"]` field (stored with each project)
+2. `ITI_CHANNEL` environment variable
+3. Default: `"f1"`
+
+**Key helpers:**
+- `load_channel(channel_id)` — load config by ID
+- `load_channel_from_script(script)` — load from script.json's "channel" field
+- `channel_asset(channel, relative_path)` — resolve asset path under `shared/channels/<id>/`
+- `channel_cred(channel, filename)` — resolve credential path under `shared/creds/<id>/`
+
+### Asset Organization
+
+```
+shared/
+  channels/
+    f1/                      # Per-channel branded assets
+      assets/logo/           # logo.png, logo2.mp4
+      assets/daily-news/     # intro.mp4, outro.mp4, etc.
+      audio/                 # intro_voiceover.mp3, outro_longform.mp3
+      fonts/                 # Formula1-Bold.ttf, TitilliumWeb-Black.ttf
+      music/                 # background.mp3, f1_cinematic_rock.mp3
+    history/                 # (planned)
+      assets/, fonts/, music/
+  sfx/                       # Shared across all channels (whoosh, swoosh, etc.)
+  creds/
+    f1/                      # Per-channel platform credentials
+      youtube_client_secrets.json
+      youtube_token.pickle
+      instagram, rss_com
+    elevenlabs               # Shared API keys
+    google_ai, pexels, openai
+```
 
 ## Skill Files (Format-Specific Guides)
 
@@ -51,12 +108,12 @@ script.json → fact_check → audio/*.mp3 → footage/*.mp4 → previews/*.jpg 
 ```
 
 **Core Modules (`src/`):**
-- `config.py` - Centralized settings, API keys, F1 team colors, video specs (shorts + long-form)
-- `fact_checker.py` - Script validation with knowledge base, web search, and reference validation
+- `config.py` - Generic pipeline settings (frame rates, concurrency, video specs). Channel-specific data is in `channels/`.
+- `fact_checker.py` - Script validation with channel knowledge base, web search, and reference validation
 - `audio_generator.py` - Gemini TTS (default, free) / ElevenLabs TTS with caching and concurrent processing
-- `gemini_podcast_audio_generator.py` - Podcast: Single-request TTS for voice consistency
+- `gemini_podcast_audio_generator.py` - Podcast: Single-request TTS with channel voice profile
 - `podcast_music_mixer.py` - Podcast: Intro/outro music mixing with FFmpeg
-- `reddit_fetcher.py` - Reddit OAuth2 API: fetch r/formula1 posts + extract media (images, GIFs, videos, galleries)
+- `reddit_fetcher.py` - Reddit OAuth2 API: fetch posts + extract media (images, GIFs, videos, galleries)
 - `footage_downloader.py` - yt-dlp YouTube search/download with concurrent downloads, 4K support, per-shot downloads, Reddit media priority
 - `shot_assembler.py` - Shared shot list logic: timing calculation, clip creation, transition stitching (used by both assemblers)
 - `stock_image_fetcher.py` - Pexels/Unsplash API for stock photos, Google Images for person portraits
@@ -64,23 +121,23 @@ script.json → fact_check → audio/*.mp3 → footage/*.mp4 → previews/*.jpg 
 - `gemini_vision_validator.py` - Gemini Flash vision validation for footage accuracy (thumbnail + file validation)
 - `image_video_assembler.py` - Long-form: YouTube-first visual routing with color grading, transition SFX, animated intro, context-aware music, SRT caption generation
 - `color_grader.py` - FFmpeg color grading presets (B&W, vintage, cinematic, warm, cool)
-- `intro_generator.py` - Animated logo intro with engine rev + swoosh SFX
-- `thumbnail_generator.py` - Auto-generated viral thumbnails with team colors (for simple topics; use hybrid logo composite approach for multi-brand topics)
+- `intro_generator.py` - Animated logo intro with engine rev + swoosh SFX (channel-aware)
+- `thumbnail_generator.py` - Auto-generated viral thumbnails with channel team colors
 - `veo3_generator.py` - Google Veo3 AI video generation for abstract concepts
 - `download_footage.sh` - Sequential footage downloader in isolated subprocesses (fallback for hangs/memory leaks)
 - `video_assembler.py` - Shorts: 9:16 vertical FFmpeg composition with GPU acceleration
 - `video_assembler_longform.py` - Long-form: 16:9 horizontal with YouTube footage (legacy)
-- `carousel_generator.py` - Carousel: HTML/CSS slide rendering via Playwright, 14 themes, 6 slide types
-- `youtube_uploader.py` - Shorts: OAuth upload with #Shorts hashtag
+- `carousel_generator.py` - Carousel: HTML/CSS slide rendering via Playwright, channel themes
+- `youtube_uploader.py` - Shorts: OAuth upload with channel tags/disclaimer
 - `instagram_uploader.py` - Shorts: Instagram Reels upload via instagrapi
-- `youtube_uploader_longform.py` - Long-form: Standard video upload with references in description, reads tags from script.json
+- `youtube_uploader_longform.py` - Long-form: Standard video upload with references in description
 - `youtube_analytics.py` - Channel analytics: view counts, retention, format performance comparison
 - `gdrive_uploader.py` - Google Drive upload for project archival
 
 **Project Structure (Video):**
 ```
 projects/{name}/
-├── script.json      # Segments with text, shots array, footage_query, footage_start
+├── script.json      # Segments with text, shots array, footage_query, footage_start, channel
 ├── audio/           # Generated voiceovers (segment_00.mp3, ...)
 ├── footage/         # Downloaded clips (segment_00.mp4, segment_00_shot_01.mp4, ...)
 ├── previews/        # Frame extractions for QA (seg00_shot00_t000.jpg, ...)
@@ -91,7 +148,7 @@ projects/{name}/
 **Project Structure (Podcast):**
 ```
 projects/{name}/
-├── script.json           # Segments with text, context, emotion
+├── script.json           # Segments with text, context, emotion, channel
 └── output/
     ├── final.mp3         # Final podcast with intro/outro music
     ├── cover_art.jpg     # Podcast cover (1400x1400 or 3000x3000)
@@ -101,7 +158,7 @@ projects/{name}/
 **Project Structure (Carousel):**
 ```
 projects/{name}/
-├── script.json      # Slides with type, content, theme (format: "carousel")
+├── script.json      # Slides with type, content, theme, channel (format: "carousel")
 ├── images/          # Source images (backgrounds, portraits)
 └── output/
     ├── slide_01.jpg  # Cover slide (1080x1080)
@@ -137,6 +194,7 @@ projects/{name}/
 7. **Static image max 6s** - No single image shot should hold >6s; >8s causes freeze frames. Split into multiple shots (one per entity). Runtime warning in shot_assembler.
 8. **SRT captions sync** - Caption generator accounts for intro video offset after cold_open. Captions are split into 8-14 word chunks, not full paragraphs.
 9. **Logo thumbnails** - AI generators cannot render real logos. For multi-brand topics, use hybrid approach: Imagen for background + FFmpeg overlay of transparent PNG logos.
+10. **Channel field in script.json** - Every script.json must include `"channel": "<id>"` so pipeline modules load the correct channel config.
 
 ## Shorts: 16:9 Video in 9:16 Frame (Blurred Background)
 
@@ -195,11 +253,15 @@ pip list | grep yt-dlp  # Should show yt-dlp, yt-dlp-get-pot, bgutil-ytdlp-pot-p
 
 ## API Keys Setup
 
-Store API keys in `shared/creds/`:
+Store shared API keys in `shared/creds/`:
 - `elevenlabs` - ElevenLabs TTS API key
 - `pexels` - Pexels stock image API (free at https://www.pexels.com/api/)
 - `unsplash` - Unsplash fallback (free at https://unsplash.com/developers)
 - `openai` - OpenAI for DALL-E graphics (optional)
 - `google_ai` - Google AI API key for Gemini TTS + Veo3 video generation
-- `instagram` - Instagram credentials (username on line 1, password on line 2)
+
+Store per-channel credentials in `shared/creds/<channel_id>/`:
 - `youtube_client_secrets.json` - YouTube OAuth credentials
+- `youtube_token.pickle` - YouTube OAuth token (auto-generated)
+- `instagram` - Instagram credentials (username on line 1, password on line 2)
+- `rss_com` - RSS.com credentials (email on line 1, password on line 2)

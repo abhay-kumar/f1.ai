@@ -15,6 +15,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import get_project_dir
+from channels import load_channel_from_script
 
 # Try to import web search capabilities
 try:
@@ -44,49 +45,8 @@ class LineCheckResult:
     overall_verdict: str
 
 
-# F1 Knowledge Base - Common facts that don't need web verification
-F1_KNOWLEDGE_BASE = {
-    # World Champions
-    "champions": {
-        "verstappen": ["2021", "2022", "2023", "2024"],
-        "hamilton": ["2008", "2014", "2015", "2017", "2018", "2019", "2020"],
-        "vettel": ["2010", "2011", "2012", "2013"],
-        "alonso": ["2005", "2006"],
-        "raikkonen": ["2007"],
-        "button": ["2009"],
-        "rosberg": ["2016"],
-        "schumacher": ["1994", "1995", "2000", "2001", "2002", "2003", "2004"],
-    },
-    # Team names and their drivers (2024 season)
-    "teams_2024": {
-        "red bull": ["verstappen", "perez"],
-        "ferrari": ["leclerc", "sainz"],
-        "mercedes": ["hamilton", "russell"],
-        "mclaren": ["norris", "piastri"],
-        "aston martin": ["alonso", "stroll"],
-        "alpine": ["gasly", "ocon"],
-        "williams": ["albon", "sargeant"],
-        "haas": ["magnussen", "hulkenberg"],
-        "kick sauber": ["bottas", "zhou"],
-        "rb": ["tsunoda", "ricciardo"],
-    },
-    # Record holders
-    "records": {
-        "most_wins": ("hamilton", 104),
-        "most_poles": ("hamilton", 104),
-        "most_championships": ("schumacher|hamilton", 7),
-        "most_podiums": ("hamilton", 197),
-        "youngest_champion": ("vettel", "23 years"),
-        "oldest_champion": ("fangio", "46 years"),
-    },
-    # Famous races/moments
-    "famous_moments": {
-        "multi 21": {"year": "2013", "drivers": ["vettel", "webber"], "race": "malaysia"},
-        "spa 2021": {"description": "shortest race, 2 laps behind safety car"},
-        "monaco 1996": {"description": "only 3 cars finished"},
-        "brazil 2008": {"description": "hamilton won championship on last corner"},
-    }
-}
+# Knowledge base is loaded from channel config at runtime
+# See channels/f1.py for the F1-specific knowledge base
 
 
 def extract_claims(text: str) -> List[str]:
@@ -125,12 +85,14 @@ def extract_claims(text: str) -> List[str]:
     return claims
 
 
-def verify_against_knowledge_base(claim: str) -> Optional[FactCheckResult]:
-    """Check claim against built-in F1 knowledge base"""
+def verify_against_knowledge_base(claim: str, knowledge_base: dict = None) -> Optional[FactCheckResult]:
+    """Check claim against channel knowledge base"""
+    if not knowledge_base:
+        return None
     claim_lower = claim.lower()
 
     # Check championship claims
-    for driver, years in F1_KNOWLEDGE_BASE["champions"].items():
+    for driver, years in knowledge_base.get("champions", {}).items():
         if driver in claim_lower:
             for year in years:
                 if year in claim:
@@ -143,7 +105,7 @@ def verify_against_knowledge_base(claim: str) -> Optional[FactCheckResult]:
                     )
 
     # Check team affiliations (2024)
-    for team, drivers in F1_KNOWLEDGE_BASE["teams_2024"].items():
+    for team, drivers in knowledge_base.get("teams_2024", {}).items():
         if team in claim_lower:
             for driver in drivers:
                 if driver in claim_lower:
@@ -156,7 +118,7 @@ def verify_against_knowledge_base(claim: str) -> Optional[FactCheckResult]:
                     )
 
     # Check records
-    for record_type, (holder, value) in F1_KNOWLEDGE_BASE["records"].items():
+    for record_type, (holder, value) in knowledge_base.get("records", {}).items():
         record_words = record_type.replace("_", " ")
         if record_words in claim_lower:
             if holder in claim_lower or (isinstance(holder, str) and "|" in holder and
@@ -250,10 +212,10 @@ def verify_with_web_search(claim: str, api_key: Optional[str] = None) -> FactChe
         )
 
 
-def check_claim(claim: str, use_web: bool = False, api_key: Optional[str] = None) -> FactCheckResult:
+def check_claim(claim: str, use_web: bool = False, api_key: Optional[str] = None, knowledge_base: dict = None) -> FactCheckResult:
     """Check a single claim using knowledge base and optionally web search"""
     # First try knowledge base
-    kb_result = verify_against_knowledge_base(claim)
+    kb_result = verify_against_knowledge_base(claim, knowledge_base)
     if kb_result and kb_result.confidence >= 0.9:
         return kb_result
 
@@ -274,7 +236,7 @@ def check_claim(claim: str, use_web: bool = False, api_key: Optional[str] = None
 
 
 def check_segment(segment: Dict, segment_id: int, use_web: bool = False,
-                  api_key: Optional[str] = None) -> List[LineCheckResult]:
+                  api_key: Optional[str] = None, knowledge_base: dict = None) -> List[LineCheckResult]:
     """Check all claims in a segment"""
     results = []
     text = segment.get("text", "")
@@ -296,7 +258,7 @@ def check_segment(segment: Dict, segment_id: int, use_web: bool = False,
     # Check each claim
     claim_results = []
     for claim in claims:
-        result = check_claim(claim, use_web, api_key)
+        result = check_claim(claim, use_web, api_key, knowledge_base)
         claim_results.append(result)
 
     # Determine overall verdict
@@ -400,6 +362,8 @@ def main():
     with open(script_file) as f:
         script = json.load(f)
 
+    channel = load_channel_from_script(script)
+    knowledge_base = channel.get("knowledge_base", {})
     segments = script.get("segments", [])
 
     # Get API key
@@ -448,7 +412,7 @@ def main():
         print(f"\n[Segment {idx}] {segment.get('context', 'Unknown')}")
         print(f"  Text: {segment.get('text', '')[:80]}...")
 
-        results = check_segment(segment, idx, args.web_search, api_key)
+        results = check_segment(segment, idx, args.web_search, api_key, knowledge_base)
         all_results.extend(results)
 
         for result in results:

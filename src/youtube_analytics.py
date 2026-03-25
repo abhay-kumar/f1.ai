@@ -24,6 +24,7 @@ from typing import Dict, List, Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import SHARED_DIR
+from channels import channel_cred, load_channel
 
 # YouTube API imports
 try:
@@ -40,36 +41,36 @@ SCOPES = [
     "https://www.googleapis.com/auth/yt-analytics.readonly",
     "https://www.googleapis.com/auth/youtube.readonly",
 ]
-CLIENT_SECRETS_FILE = f"{SHARED_DIR}/creds/youtube_client_secrets.json"
-TOKEN_FILE = f"{SHARED_DIR}/creds/youtube_analytics_token.pickle"
-
-
-def get_authenticated_services() -> Tuple[object, object]:
+def get_authenticated_services(channel_id: str = None) -> Tuple[object, object]:
     """Authenticate and return (youtube_data, youtube_analytics) service pair."""
+    ch = load_channel(channel_id)
+    client_secrets = channel_cred(ch, ch["creds"]["youtube_client_secrets"])
+    token_file = channel_cred(ch, ch["creds"]["youtube_analytics_token"])
+
     credentials = None
 
-    if os.path.exists(TOKEN_FILE):
-        with open(TOKEN_FILE, "rb") as token:
+    if os.path.exists(token_file):
+        with open(token_file, "rb") as token:
             credentials = pickle.load(token)
 
     if not credentials or not credentials.valid:
         if credentials and credentials.expired and credentials.refresh_token:
             credentials.refresh(Request())
         else:
-            if not os.path.exists(CLIENT_SECRETS_FILE):
-                print(f"Error: YouTube credentials not found at {CLIENT_SECRETS_FILE}")
+            if not os.path.exists(client_secrets):
+                print(f"Error: YouTube credentials not found at {client_secrets}")
                 print("\nSetup instructions:")
                 print("1. Go to https://console.cloud.google.com/")
                 print("2. Enable YouTube Data API v3 AND YouTube Analytics API")
                 print("3. Create OAuth 2.0 credentials (Desktop app)")
-                print("4. Download and save as: shared/creds/youtube_client_secrets.json")
+                print(f"4. Download and save as: shared/creds/{ch['id']}/youtube_client_secrets.json")
                 sys.exit(1)
 
-            flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS_FILE, SCOPES)
+            flow = InstalledAppFlow.from_client_secrets_file(client_secrets, SCOPES)
             credentials = flow.run_local_server(port=0)
 
-        os.makedirs(os.path.dirname(TOKEN_FILE), exist_ok=True)
-        with open(TOKEN_FILE, "wb") as token:
+        os.makedirs(os.path.dirname(token_file), exist_ok=True)
+        with open(token_file, "wb") as token:
             pickle.dump(credentials, token)
 
     youtube = build("youtube", "v3", credentials=credentials)

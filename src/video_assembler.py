@@ -24,9 +24,6 @@ from typing import Optional, Tuple
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import (
     AUDIO_BITRATE,
-    BACKGROUND_MUSIC,
-    F1_DEFAULT_COLOR,
-    F1_TEAM_COLORS,
     FRAME_RATE,
     MIN_SHOT_DURATION,
     MUSIC_VOLUME,
@@ -38,6 +35,7 @@ from src.config import (
     VIDEO_BITRATE,
     get_project_dir,
 )
+from channels import channel_asset, load_channel_from_script
 from src.shot_assembler import (
     TRANSITION_DEFAULTS,
     calculate_shot_timings,
@@ -155,12 +153,78 @@ def get_video_stream_duration(file_path):
     return get_duration(file_path)
 
 
-def download_music_if_needed():
+def _is_image_file(file_path):
+    """Detect if a file is a static image (PNG/JPEG/WebP) regardless of extension."""
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=codec_name,nb_frames",
+             "-of", "csv=p=0", file_path],
+            capture_output=True, text=True, timeout=5
+        )
+        parts = probe.stdout.strip().split(",")
+        if len(parts) >= 1:
+            codec = parts[0]
+            if codec in ("png", "mjpeg", "bmp", "webp", "tiff"):
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _ensure_video(footage_path, duration):
+    """Convert static image files to proper video. Returns path to video file.
+
+    If the footage is already a video, returns the original path unchanged.
+    If it's an image (PNG/JPEG with .mp4 extension), converts it to a looped
+    video of the specified duration and replaces the file in-place.
+
+    Uses lavfi color source + overlay to avoid -loop 1 hangs with VideoToolbox.
+    """
+    if not _is_image_file(footage_path):
+        return footage_path
+
+    # Get image dimensions for the color source
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "csv=p=0", footage_path],
+        capture_output=True, text=True, timeout=5
+    )
+    dims = probe.stdout.strip()
+    if "," in dims:
+        w, h = dims.split(",")[:2]
+    else:
+        w, h = "1080", "1080"
+
+    tmp_video = footage_path + ".converting.mp4"
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "lavfi", "-i", f"color=black:s={w}x{h}:d={duration}:r={FRAME_RATE}",
+        "-i", footage_path,
+        "-filter_complex",
+        f"[1:v]scale={w}:{h}[img];[0:v][img]overlay=0:0,format=yuv420p",
+        "-c:v", "libx264", "-preset", "fast",
+        "-b:v", VIDEO_BITRATE,
+        "-movflags", "+faststart",
+        "-an",
+        tmp_video,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    if os.path.exists(tmp_video) and os.path.getsize(tmp_video) > 0:
+        os.replace(tmp_video, footage_path)
+    else:
+        # Conversion failed — leave original image, will produce 1-frame output
+        if os.path.exists(tmp_video):
+            os.remove(tmp_video)
+    return footage_path
+
+
+def download_music_if_needed(music_path):
     """Download background music if not present"""
-    if os.path.exists(BACKGROUND_MUSIC):
+    if os.path.exists(music_path):
         return True
 
-    os.makedirs(os.path.dirname(BACKGROUND_MUSIC), exist_ok=True)
+    os.makedirs(os.path.dirname(music_path), exist_ok=True)
     print("Downloading background music...", end=" ", flush=True)
 
     # Try yt-dlp for music
@@ -170,12 +234,12 @@ def download_music_if_needed():
         "--audio-format",
         "mp3",
         "-o",
-        BACKGROUND_MUSIC.replace(".mp3", ".%(ext)s"),
+        music_path.replace(".mp3", ".%(ext)s"),
         "https://www.youtube.com/watch?v=MkNeIUgNPQ8",  # Epic cinematic
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
 
-    if os.path.exists(BACKGROUND_MUSIC):
+    if os.path.exists(music_path):
         print("Done")
         return True
     else:
@@ -215,16 +279,18 @@ def wrap_text(text, max_chars=35):
     return lines
 
 
-def get_team_color(text):
-    """Detect team/driver mentions and return appropriate F1 team color"""
+def get_team_color(text, channel=None):
+    """Detect team/driver mentions and return appropriate team color"""
+    if channel is None:
+        channel = load_channel_from_script({})
     text_lower = text.lower()
 
     # Check for team/driver mentions (priority: first mentioned)
-    for keyword, color in F1_TEAM_COLORS.items():
+    for keyword, color in channel["entity_colors"].items():
         if keyword in text_lower:
             return color
 
-    return F1_DEFAULT_COLOR
+    return channel["default_text_color"]
 
 
 def _split_into_sentences(text):
@@ -397,6 +463,7 @@ def _create_multishot_segment(
     video_encoder,
     encoder_flags,
     word_by_word=False,
+    font_path=None,
 ):
     """Create a segment video from multiple shots with transitions.
 
@@ -525,13 +592,11 @@ def _create_multishot_segment(
             return False, "Failed to stitch shots"
 
     # Build text caption filters
-    f1_font = "/Users/abhaykumar/Documents/f1.ai/shared/fonts/Formula1-Bold.ttf"
-
     if segment.get("no_text", False):
         text_filter = "null"
     elif word_by_word:
         text_filter = build_word_by_word_filters(
-            segment["text"], audio_duration, f1_font
+            segment["text"], audio_duration, font_path
         )
     else:
         lines = wrap_text(segment["text"], max_chars=25)
@@ -618,14 +683,14 @@ def _create_multishot_segment(
 
                     drawtext_filters.append(
                         f"drawtext=text='{escaped_line}':"
-                        f"fontfile={f1_font}:"
+                        f"fontfile={font_path}:"
                         f"fontsize={p_fs}:fontcolor=black@0.5:"
                         f"x=(w-text_w)/2+3:y={y_pos}+3:"
                         f"enable='{base_enable}'"
                     )
                     drawtext_filters.append(
                         f"drawtext=text='{escaped_line}':"
-                        f"fontfile={f1_font}:"
+                        f"fontfile={font_path}:"
                         f"fontsize={p_fs}:fontcolor={team_color}:"
                         f"x=(w-text_w)/2:y={y_pos}:"
                         f"enable='{base_enable}'"
@@ -640,13 +705,13 @@ def _create_multishot_segment(
                 y_pos = start_y + (i * line_height)
                 drawtext_filters.append(
                     f"drawtext=text='{escaped_line}':"
-                    f"fontfile={f1_font}:"
+                    f"fontfile={font_path}:"
                     f"fontsize={font_size}:fontcolor=black@0.5:"
                     f"x=(w-text_w)/2+3:y={y_pos}+3"
                 )
                 drawtext_filters.append(
                     f"drawtext=text='{escaped_line}':"
-                    f"fontfile={f1_font}:"
+                    f"fontfile={font_path}:"
                     f"fontsize={font_size}:fontcolor={team_color}:"
                     f"x=(w-text_w)/2:y={y_pos}"
                 )
@@ -715,6 +780,7 @@ def create_segment_video(
     encoder=None,
     encoder_flags=None,
     word_by_word=False,
+    font_path=None,
 ):
     """Create video segment with blur-pad effect and text captions.
 
@@ -739,6 +805,11 @@ def create_segment_video(
     segment = normalize_segment(segment)
     shots = segment.get("shots", [])
 
+    # Resolve font
+    if font_path is None:
+        ch = load_channel_from_script({})
+        font_path = channel_asset(ch, ch["font_bold"])
+
     # Multi-shot path: 2+ shots with actual footage/source files
     if len(shots) > 1:
         try:
@@ -753,6 +824,7 @@ def create_segment_video(
                 video_encoder,
                 extra_flags,
                 word_by_word=word_by_word,
+                font_path=font_path,
             )
             if result[0]:  # Success
                 return result
@@ -777,13 +849,11 @@ def create_segment_video(
     start_time = segment.get("footage_start", 0)
 
     # Build text caption filters
-    f1_font = "/Users/abhaykumar/Documents/f1.ai/shared/fonts/Formula1-Bold.ttf"
-
     if segment.get("no_text"):
         text_filter = "null"
     elif word_by_word:
         text_filter = build_word_by_word_filters(
-            segment["text"], audio_duration, f1_font
+            segment["text"], audio_duration, font_path
         )
     else:
         # Wrap and escape text for FFmpeg
@@ -894,7 +964,7 @@ def create_segment_video(
                     # Shadow
                     drawtext_filters.append(
                         f"drawtext=text='{escaped_line}':"
-                        f"fontfile={f1_font}:"
+                        f"fontfile={font_path}:"
                         f"fontsize={p_fs}:fontcolor=black@0.5:"
                         f"x=(w-text_w)/2+3:y={y_pos}+3:"
                         f"enable='{enable_cond}'"
@@ -902,7 +972,7 @@ def create_segment_video(
                     # Main text
                     drawtext_filters.append(
                         f"drawtext=text='{escaped_line}':"
-                        f"fontfile={f1_font}:"
+                        f"fontfile={font_path}:"
                         f"fontsize={p_fs}:fontcolor={team_color}:"
                         f"x=(w-text_w)/2:y={y_pos}:"
                         f"enable='{enable_cond}'"
@@ -918,18 +988,23 @@ def create_segment_video(
                 y_pos = start_y + (i * line_height)
                 drawtext_filters.append(
                     f"drawtext=text='{escaped_line}':"
-                    f"fontfile={f1_font}:"
+                    f"fontfile={font_path}:"
                     f"fontsize={font_size}:fontcolor=black@0.5:"
                     f"x=(w-text_w)/2+3:y={y_pos}+3"
                 )
                 drawtext_filters.append(
                     f"drawtext=text='{escaped_line}':"
-                    f"fontfile={f1_font}:"
+                    f"fontfile={font_path}:"
                     f"fontsize={font_size}:fontcolor={team_color}:"
                     f"x=(w-text_w)/2:y={y_pos}"
                 )
 
         text_filter = ",".join(drawtext_filters) if drawtext_filters else "null"
+
+    # Pre-convert static images to proper video files.
+    # Reddit images are sometimes saved as .mp4 but are actually PNG/JPEG.
+    # The trim filter produces only 1 frame for these, causing freeze in concat.
+    footage_file = _ensure_video(footage_file, audio_duration + 2)
 
     # Blur-pad filter with SPLIT (critical fix!)
     # Creates blurred background + centered sharp footage + text captions
@@ -980,23 +1055,15 @@ def create_segment_video(
 
 def process_segment_video(args: Tuple) -> Tuple[int, bool, float, Optional[str]]:
     """Process a single segment video (for concurrent execution)"""
-    # Support both old 7-element and new 8-element tuple
-    if len(args) >= 8:
-        (
-            idx,
-            segment,
-            audio_path,
-            footage_dir,
-            output_path,
-            encoder,
-            encoder_flags,
-            word_by_word,
-        ) = args
+    # Support 7, 8, or 9 element tuples (font_path added as 9th)
+    font_path = None
+    word_by_word = False
+    if len(args) >= 9:
+        idx, segment, audio_path, footage_dir, output_path, encoder, encoder_flags, word_by_word, font_path = args
+    elif len(args) >= 8:
+        idx, segment, audio_path, footage_dir, output_path, encoder, encoder_flags, word_by_word = args
     else:
-        idx, segment, audio_path, footage_dir, output_path, encoder, encoder_flags = (
-            args
-        )
-        word_by_word = False
+        idx, segment, audio_path, footage_dir, output_path, encoder, encoder_flags = args
 
     success, error = create_segment_video(
         idx,
@@ -1007,6 +1074,7 @@ def process_segment_video(args: Tuple) -> Tuple[int, bool, float, Optional[str]]
         encoder=encoder,
         encoder_flags=encoder_flags,
         word_by_word=word_by_word,
+        font_path=font_path,
     )
 
     if success:
@@ -1015,9 +1083,9 @@ def process_segment_video(args: Tuple) -> Tuple[int, bool, float, Optional[str]]
     return idx, False, 0, error
 
 
-def add_background_music(video_path, output_path):
+def add_background_music(video_path, output_path, music_path):
     """Mix background music under video audio"""
-    if not os.path.exists(BACKGROUND_MUSIC):
+    if not os.path.exists(music_path):
         subprocess.run(["cp", video_path, output_path])
         return True
 
@@ -1036,7 +1104,7 @@ def add_background_music(video_path, output_path):
         "-i",
         video_path,
         "-i",
-        BACKGROUND_MUSIC,
+        music_path,
         "-filter_complex",
         filter_complex,
         "-map",
@@ -1182,6 +1250,9 @@ def main():
     with open(script_file) as f:
         script = json.load(f)
 
+    channel = load_channel_from_script(script)
+    background_music = channel_asset(channel, channel["background_music"])
+
     segments = script["segments"]
     script_format = script.get("format", "short")
 
@@ -1197,10 +1268,7 @@ def main():
     # Auto-copy logo asset for CTA/outro segments that have no footage yet.
     # Prevents the footage downloader from wasting time searching YouTube
     # for the outro, and ensures brand consistency.
-    logo_asset = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "shared", "assets", "daily-news", "logo_zoom.mp4",
-    )
+    logo_asset = channel_asset(channel, channel["daily_news"]["logo_zoom"])
     for i, seg in enumerate(segments):
         ctx = seg.get("context", "").lower()
         if any(kw in ctx for kw in ("outro", "cta")) and os.path.exists(logo_asset):
@@ -1224,12 +1292,15 @@ def main():
     # Download music
     if not args.no_music:
         print()
-        download_music_if_needed()
+        download_music_if_needed(background_music)
 
     # Create segments
     print(f"\nCreating {len(segments)} segments...\n")
     segment_videos = []
     results = {}
+
+    # Resolve channel font for captions
+    caption_font = channel_asset(channel, channel["font_bold"])
 
     # Prepare tasks
     tasks = [
@@ -1242,6 +1313,7 @@ def main():
             encoder,
             encoder_flags,
             getattr(args, "word_by_word", False),
+            caption_font,
         )
         for i, segment in enumerate(segments)
     ]
@@ -1478,7 +1550,7 @@ def main():
     final_output = f"{output_dir}/final.mp4"
     if not args.no_music:
         print("Adding background music...")
-        add_background_music(concat_output, final_output)
+        add_background_music(concat_output, final_output, background_music)
     else:
         subprocess.run(["cp", concat_output, final_output])
 

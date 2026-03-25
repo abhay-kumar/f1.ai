@@ -1,11 +1,13 @@
 """
-Shared configuration for F1 short video creator
+Shared configuration for iti.ai video pipeline.
+
+Generic settings only — channel-specific data lives in channels/<id>.py.
 """
 
 import multiprocessing
 import os
 
-BASE_DIR = "/Users/abhaykumar/Documents/f1.ai"
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROJECTS_DIR = f"{BASE_DIR}/projects"
 SHARED_DIR = f"{BASE_DIR}/shared"
 
@@ -20,15 +22,14 @@ MAX_CONCURRENT_DOWNLOADS = 3  # Be respectful to YouTube
 MAX_CONCURRENT_SEGMENTS = min(4, multiprocessing.cpu_count())  # For video assembly
 MAX_CONCURRENT_FRAMES = 4  # For preview extraction
 
-# YouTube API Config
-YOUTUBE_CLIENT_SECRETS = f"{SHARED_DIR}/creds/youtube_client_secrets.json"
-YOUTUBE_TOKEN_FILE = f"{SHARED_DIR}/creds/youtube_token.pickle"
-YOUTUBE_ANALYTICS_TOKEN_FILE = f"{SHARED_DIR}/creds/youtube_analytics_token.pickle"
+# Music Volume Config
+MUSIC_VOLUME = 0.04  # Lowered from 0.08 to ensure voiceover dominates
+MUSIC_VOLUME_LONGFORM = 0.05  # Very quiet for long-form content (5%)
+MUSIC_VOLUME_UPLIFTING = 0.08  # Louder for feel-good/victory segments
+MUSIC_VOLUME_ATMOSPHERIC = 0.04  # Softer for history/technical segments
 
-# Instagram API Config
-INSTAGRAM_CREDENTIALS_FILE = f"{SHARED_DIR}/creds/instagram"
-INSTAGRAM_SESSION_FILE = f"{SHARED_DIR}/creds/instagram_session.json"
-
+# Outro Config
+CREDITS_DURATION_LONGFORM = 5  # Short credits overlay during outro
 
 # Video Config
 FRAME_RATE = 30  # CRITICAL: Must be consistent across all segments
@@ -54,18 +55,6 @@ SHORTS_IMAGE_AREA_HEIGHT = 1270
 # Audio Pace Config
 SHORTS_AUDIO_SPEED = 1.25  # 25% faster for punchy short-form delivery
 
-# Music Config
-BACKGROUND_MUSIC = f"{SHARED_DIR}/music/background.mp3"
-BACKGROUND_MUSIC_LONGFORM = f"{SHARED_DIR}/music/f1_cinematic_rock.mp3"  # Racing-themed cinematic rock (royalty-free)
-MUSIC_VOLUME = 0.04  # Lowered from 0.08 to ensure voiceover dominates
-MUSIC_VOLUME_LONGFORM = 0.05  # Very quiet for long-form content (5%)
-MUSIC_VOLUME_UPLIFTING = 0.08  # Louder for feel-good/victory segments
-MUSIC_VOLUME_ATMOSPHERIC = 0.04  # Softer for history/technical segments
-
-# Outro Audio (reusable for all long-form videos)
-OUTRO_AUDIO_LONGFORM = f"{SHARED_DIR}/audio/outro_longform.mp3"  # ~19s CTA voiceover
-CREDITS_DURATION_LONGFORM = 5  # Short credits overlay during outro
-
 # Long-form Video Config (16:9 horizontal)
 LONGFORM_FRAME_RATE = 30
 LONGFORM_OUTPUT_WIDTH_4K = 3840
@@ -90,46 +79,6 @@ TOPIC_CARD_DURATION = 1.5  # Duration of transition card (seconds)
 
 # Remotion Graphics
 REMOTION_PROJECT_DIR = f"{BASE_DIR}/shared/remotion-template"
-
-# F1 Team Colors (official hex codes for team radio style text)
-F1_TEAM_COLORS = {
-    # Current teams (2026 grid)
-    "red bull": "#3671C6",  # Red Bull Racing blue
-    "redbull": "#3671C6",
-    "mclaren": "#FF8000",  # McLaren papaya
-    "ferrari": "#E8002D",  # Ferrari red
-    "mercedes": "#27F4D2",  # Mercedes teal
-    "aston martin": "#229971",  # Aston Martin green
-    "alpine": "#FF87BC",  # Alpine pink
-    "williams": "#64C4FF",  # Williams blue
-    "haas": "#B6BABD",  # Haas silver
-    "cadillac": "#C4A747",  # Cadillac gold/crest
-    "audi": "#BB0A1E",  # Audi red
-    "racing bulls": "#6692FF",  # Racing Bulls blue
-    # Drivers (mapped to their 2026 teams)
-    "vettel": "#3671C6",  # Red Bull era
-    "webber": "#3671C6",  # Red Bull
-    "norris": "#FF8000",  # McLaren
-    "piastri": "#FF8000",  # McLaren
-    "verstappen": "#3671C6",  # Red Bull
-    "hadjar": "#3671C6",  # Red Bull
-    "hamilton": "#E8002D",  # Ferrari (2026)
-    "leclerc": "#E8002D",  # Ferrari
-    "alonso": "#229971",  # Aston Martin
-    "russell": "#27F4D2",  # Mercedes
-    "antonelli": "#27F4D2",  # Mercedes
-    "perez": "#C4A747",  # Cadillac (2026)
-    "bottas": "#C4A747",  # Cadillac (2026)
-    "ocon": "#B6BABD",  # Haas (2026)
-    "bortoleto": "#BB0A1E",  # Audi
-    "hulkenberg": "#BB0A1E",  # Audi
-    "colapinto": "#FF87BC",  # Alpine
-    "lawson": "#6692FF",  # Racing Bulls
-    "palou": "#FF8000",  # McLaren (legal context)
-}
-
-# Default text color if no team/driver detected
-F1_DEFAULT_COLOR = "#FFFFFF"
 
 # ============================================================================
 # SHOT LIST CONFIG (multi-visual segments)
@@ -214,21 +163,6 @@ VALIDATION_CONFIDENCE_THRESHOLD = 0.6  # Minimum match confidence to accept
 
 GOOGLE_SEARCH_DELAY = 2.0  # Seconds between Google requests (rate limit)
 GOOGLE_SEARCH_CACHE_TTL = 3600  # Cache search results for 1 hour
-
-# Official F1 channels (prioritized in search)
-OFFICIAL_F1_CHANNELS = [
-    "FORMULA 1",
-    "Formula 1",
-    "F1",
-    "Sky Sports F1",
-    "Red Bull Racing",
-    "Mercedes-AMG PETRONAS F1 Team",
-    "Scuderia Ferrari",
-    "McLaren",
-    "Aston Martin Aramco F1 Team",
-    "BWT Alpine F1 Team",
-    "Williams Racing",
-]
 
 # ============================================================================
 # CAROUSEL CONFIG (Instagram square posts)

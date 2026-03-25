@@ -20,7 +20,8 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from src.config import SHARED_DIR, get_project_dir
+from src.config import get_project_dir
+from channels import channel_cred, load_channel_from_script
 
 # YouTube API imports
 try:
@@ -39,65 +40,42 @@ SCOPES = [
     "https://www.googleapis.com/auth/youtube.force-ssl",  # Required for captions
     "https://www.googleapis.com/auth/youtube",  # Required for thumbnail upload
 ]
-CLIENT_SECRETS_FILE = f"{SHARED_DIR}/creds/youtube_client_secrets.json"
-TOKEN_FILE = f"{SHARED_DIR}/creds/youtube_token.pickle"
-
-# Long-form video settings
-VIDEO_CATEGORY_ID = "17"  # Sports category
 DEFAULT_PRIVACY = "public"
 
-# F1 Fan Content Disclaimer (per F1 guidelines)
-F1_FAN_DISCLAIMER = """
-───────────────────────────────────────────────────────────────────
-⚠️ DISCLAIMER
 
-This video is unofficial fan content created for commentary,
-education, and entertainment purposes. It is not associated with,
-endorsed by, or affiliated with:
-• Formula 1 / Formula One Management (FOM)
-• Fédération Internationale de l'Automobile (FIA)
-• Any Formula 1 team or driver
-
-All F1-related trademarks, footage, and imagery are property of
-their respective owners and are used here under fair use for
-transformative commentary.
-
-For official F1 content: https://www.formula1.com
-For official F1 TV: https://f1tv.formula1.com
-───────────────────────────────────────────────────────────────────
-"""
-
-
-def get_authenticated_service():
+def get_authenticated_service(channel):
     """Authenticate and return YouTube API service"""
+    client_secrets_file = channel_cred(channel, channel["creds"]["youtube_client_secrets"])
+    token_file = channel_cred(channel, channel["creds"]["youtube_token"])
+
     credentials = None
 
-    if os.path.exists(TOKEN_FILE):
-        with open(TOKEN_FILE, "rb") as token:
+    if os.path.exists(token_file):
+        with open(token_file, "rb") as token:
             credentials = pickle.load(token)
 
     if not credentials or not credentials.valid:
         if credentials and credentials.expired and credentials.refresh_token:
             credentials.refresh(Request())
         else:
-            if not os.path.exists(CLIENT_SECRETS_FILE):
-                print(f"Error: YouTube credentials not found at {CLIENT_SECRETS_FILE}")
+            if not os.path.exists(client_secrets_file):
+                print(f"Error: YouTube credentials not found at {client_secrets_file}")
                 print("\nSetup instructions:")
                 print("1. Go to https://console.cloud.google.com/")
                 print("2. Create a project and enable YouTube Data API v3")
                 print("3. Create OAuth 2.0 credentials (Desktop app)")
                 print(
-                    "4. Download and save as: shared/creds/youtube_client_secrets.json"
+                    f"4. Download and save as: {client_secrets_file}"
                 )
                 return None
 
             flow = InstalledAppFlow.from_client_secrets_file(
-                CLIENT_SECRETS_FILE, SCOPES
+                client_secrets_file, SCOPES
             )
             credentials = flow.run_local_server(port=0)
 
-        os.makedirs(os.path.dirname(TOKEN_FILE), exist_ok=True)
-        with open(TOKEN_FILE, "wb") as token:
+        os.makedirs(os.path.dirname(token_file), exist_ok=True)
+        with open(token_file, "wb") as token:
             pickle.dump(credentials, token)
 
     return build("youtube", "v3", credentials=credentials)
@@ -184,7 +162,9 @@ def generate_chapters(script: Dict) -> str:
 
 def generate_metadata_from_script(script: Dict) -> Dict:
     """Generate YouTube title, description, and tags from script.json"""
-    base_title = script.get("title", "F1 Video")
+    channel = load_channel_from_script(script)
+
+    base_title = script.get("title", "Video")
     # No #Shorts suffix for long-form
     title = base_title
 
@@ -204,13 +184,14 @@ def generate_metadata_from_script(script: Dict) -> Dict:
     chapters_section = generate_chapters(script)
 
     # 4. Build full description
+    about_text = channel.get("about_video", "An in-depth video with verified facts.")
     description_parts = [
         summary,
         "",
         "─" * 40,
         "",
         "🏎️ ABOUT THIS VIDEO",
-        "An in-depth look at Formula 1 history, statistics, and stories.",
+        about_text,
         "All facts are verified against official sources.",
     ]
 
@@ -221,14 +202,14 @@ def generate_metadata_from_script(script: Dict) -> Dict:
         description_parts.append(references_section)
 
     # Add disclaimer
-    description_parts.append(F1_FAN_DISCLAIMER)
+    description_parts.append(channel["disclaimer_longform"])
 
     description_parts.extend(
         [
             "",
-            "#F1 #Formula1 #Racing #Motorsport",
+            channel["description_hashtags"],
             "",
-            "Created with F1.ai - Automated F1 video production",
+            channel["created_with"],
         ]
     )
 
@@ -238,59 +219,23 @@ def generate_metadata_from_script(script: Dict) -> Dict:
     script_tags = script.get("tags", [])
     tags = list(script_tags) if script_tags else []
     # Always ensure base tags are present
-    for base_tag in ["F1", "Formula1", "Formula 1", "Racing", "Motorsport", "Grand Prix"]:
+    for base_tag in channel["base_tags"]:
         if base_tag not in tags:
             tags.append(base_tag)
 
     # Driver/team detection (supplements script tags)
     full_text = " ".join([seg.get("text", "") for seg in segments]).lower()
 
-    driver_tags = {
-        "verstappen": ["Verstappen", "Max Verstappen", "Red Bull"],
-        "hamilton": ["Hamilton", "Lewis Hamilton", "Mercedes"],
-        "leclerc": ["Leclerc", "Charles Leclerc", "Ferrari"],
-        "norris": ["Norris", "Lando Norris", "McLaren"],
-        "sainz": ["Sainz", "Carlos Sainz"],
-        "alonso": ["Alonso", "Fernando Alonso", "Aston Martin"],
-        "piastri": ["Piastri", "Oscar Piastri"],
-        "russell": ["Russell", "George Russell"],
-        "vettel": ["Vettel", "Sebastian Vettel"],
-        "schumacher": ["Schumacher", "Michael Schumacher"],
-        "senna": ["Senna", "Ayrton Senna"],
-        "prost": ["Prost", "Alain Prost"],
-    }
-
-    team_tags = {
-        "red bull": ["Red Bull Racing", "Red Bull F1"],
-        "mclaren": ["McLaren", "McLaren F1 Team"],
-        "ferrari": ["Ferrari", "Scuderia Ferrari"],
-        "mercedes": ["Mercedes", "Mercedes AMG"],
-        "aston martin": ["Aston Martin F1"],
-        "williams": ["Williams Racing"],
-        "alpine": ["Alpine F1"],
-    }
-
-    for keyword, tag_list in driver_tags.items():
+    for keyword, tag_list in channel["driver_tags"].items():
         if keyword in full_text:
             tags.extend(tag_list)
 
-    for keyword, tag_list in team_tags.items():
+    for keyword, tag_list in channel["team_tags"].items():
         if keyword in full_text:
             tags.extend(tag_list)
 
     # Add topic-specific tags
-    topic_tags = {
-        "champion": ["World Championship", "F1 Champion"],
-        "race win": ["Race Winner", "Victory"],
-        "pole position": ["Pole Position", "Qualifying"],
-        "rivalry": ["F1 Rivalry", "Racing Rivalry"],
-        "history": ["F1 History", "Racing History"],
-        "legend": ["F1 Legend", "Racing Legend"],
-        "debut": ["F1 Debut", "Rookie"],
-        "retirement": ["F1 Retirement"],
-    }
-
-    for keyword, tag_list in topic_tags.items():
+    for keyword, tag_list in channel["topic_tags"].items():
         if keyword in full_text:
             tags.extend(tag_list)
 
@@ -383,7 +328,7 @@ def upload_thumbnail(youtube, video_id: str, thumbnail_path: str) -> bool:
 
 
 def upload_video(
-    youtube, video_path: str, metadata: Dict, privacy: str = "private"
+    youtube, video_path: str, metadata: Dict, category_id: str, privacy: str = "private"
 ) -> Optional[Dict]:
     """Upload video to YouTube"""
     body = {
@@ -391,7 +336,7 @@ def upload_video(
             "title": metadata["title"],
             "description": metadata["description"],
             "tags": metadata["tags"],
-            "categoryId": VIDEO_CATEGORY_ID,
+            "categoryId": category_id,
         },
         "status": {
             "privacyStatus": privacy,
@@ -488,6 +433,7 @@ def main():
     with open(script_path) as f:
         script = json.load(f)
 
+    channel = load_channel_from_script(script)
     metadata = generate_metadata_from_script(script)
 
     # Override title if provided
@@ -558,11 +504,11 @@ def main():
     print()
 
     # Authenticate and upload
-    youtube = get_authenticated_service()
+    youtube = get_authenticated_service(channel)
     if not youtube:
         sys.exit(1)
 
-    response = upload_video(youtube, video_path, metadata, args.privacy)
+    response = upload_video(youtube, video_path, metadata, channel["category_id"], args.privacy)
 
     if response:
         video_id = response.get("id")
